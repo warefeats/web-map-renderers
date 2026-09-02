@@ -27,6 +27,8 @@ export interface PassResult {
   tileRequests: number;
   tilesMissing: number;
   tileBytes: number;
+  /** Tile requests during the measured warm traversal; near zero means it really was warm. */
+  warmTileRequests: number;
   glyphRequests: number;
   pageErrors: string[];
   mapErrors: string[];
@@ -199,13 +201,19 @@ async function measurePass(
     }
     phase = "cold-pan";
     const coldViewsMs = (await ctx.page.evaluate((cfg) => (window as any).bench.traverseIdle(cfg.states, cfg.idleTimeoutMs), { states: coldStates, idleTimeoutMs: proto.idleTimeoutMs })) as number[];
+    // Prime: one unmeasured render-advanced traversal of the warm steps picks up any tile the cold pan left out, then the
+    // map settles. The measured traversal follows, with the tile requests it caused recorded beside its timings.
     phase = "prime";
-    await ctx.page.evaluate((cfg) => (window as any).bench.traverseIdle(cfg.states, cfg.idleTimeoutMs), { states: warmStates, idleTimeoutMs: proto.idleTimeoutMs });
+    await ctx.page.evaluate((cfg) => (window as any).bench.traverseRender(cfg.states, cfg.idleTimeoutMs), { states: warmStates, idleTimeoutMs: proto.idleTimeoutMs });
+    await ctx.page.evaluate((ms) => (window as any).bench.settle(ms), proto.idleTimeoutMs);
+    const before = { tiles: server.counters.tiles, tilesMissing: server.counters.tilesMissing, tileBytes: server.counters.tileBytes };
+    server.resetCounters();
     phase = "warm-paint";
     const warmStepsMs = (await ctx.page.evaluate((cfg) => (window as any).bench.traverseRender(cfg.states, cfg.idleTimeoutMs), { states: warmStates, idleTimeoutMs: proto.idleTimeoutMs })) as number[];
+    const warmTileRequests = server.counters.tiles;
     const mapErrors = (await ctx.page.evaluate(() => (window as any).bench.errors.slice())) as string[];
     violations.push(...ctx.violations);
-    const c = server.counters;
+    const c = { tiles: before.tiles + server.counters.tiles, tilesMissing: before.tilesMissing + server.counters.tilesMissing, tileBytes: before.tileBytes + server.counters.tileBytes, glyphs: server.counters.glyphs };
     return {
       startup: { ...startup, importMs: lib.importMs },
       geojsonMs: geojson.ms,
@@ -215,6 +223,7 @@ async function measurePass(
       tileRequests: c.tiles,
       tilesMissing: c.tilesMissing,
       tileBytes: c.tileBytes,
+      warmTileRequests,
       glyphRequests: c.glyphs,
       pageErrors: [...ctx.pageErrors, ...ctx.consoleErrors],
       mapErrors,
@@ -306,7 +315,7 @@ async function main(): Promise<void> {
       gate: GATE,
       reference: REFERENCE,
       coldAdvance: "jumpTo, then wait for the map's idle event",
-      warmAdvance: "jumpTo, then wait for the map's render event, after an idle-advanced priming traversal of the same steps",
+      warmAdvance: "jumpTo, then wait for the map's render event, after one unmeasured render-advanced traversal of the same steps and an idle; tile requests during the measured traversal are recorded",
       memoryMeasure: process.platform === "win32" ? "private bytes of the renderer and GPU processes, fresh browser process per sample, minus a blank-page baseline" : "RSS of the renderer and GPU processes, fresh browser process per sample, minus a blank-page baseline" + "; default tile cache",
     },
     candidates: args.candidates.map((id) => ({ ...CANDIDATES[id], bytes: bundleBytes(root, CANDIDATES[id]), libraryVersion: null, workerCount: null })),

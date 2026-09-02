@@ -12,6 +12,7 @@ function pass(idle: number, warm: number): PassResult {
     tileRequests: 120,
     tilesMissing: 0,
     tileBytes: 1_000_000,
+    warmTileRequests: 0,
     glyphRequests: 10,
     pageErrors: [],
     mapErrors: [],

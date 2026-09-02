@@ -130,6 +130,13 @@
     return out;
   };
 
+  // Settle: force one more frame and wait for the map to go idle, so anything still in flight has landed.
+  bench.settle = (timeoutMs) => {
+    const idle = once(bench.map, "idle", timeoutMs, "idle after settle");
+    bench.map.triggerRepaint();
+    return idle;
+  };
+
   // Warm paint: advance a step on every render, so the camera moves every frame.
   bench.traverseRender = async (states, timeoutMs) => {
     const out = [];

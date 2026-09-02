@@ -182,6 +182,7 @@ export function buildFrameTimeSection(raw: RawResults): BenchmarkSection {
       "warm-frame-mean": { value: round(avg(allSteps(id)), 2), unit: "ms", label: "Warm paint, mean per frame" },
       "warm-frame-median": { value: round(percentile(allSteps(id), 0.5), 2), unit: "ms", label: "Warm paint, median frame" },
       "warm-frame-p99": { value: round(percentile(allSteps(id), 0.99), 2), unit: "ms", label: "Warm paint, p99 frame" },
+      "warm-tile-requests": { value: round(avg(perPass(raw, id, (r) => r.warmTileRequests)), 1), unit: "requests", label: "Tile requests during the measured warm traversal, mean per pass" },
     }),
   );
   const tests: BenchmarkTest[] = [
@@ -196,7 +197,7 @@ export function buildFrameTimeSection(raw: RawResults): BenchmarkSection {
     {
       id: "warm-paint",
       title: "Warm paint, per frame",
-      description: `Mean time per frame over the ${raw.protocol.warmSteps}-step camera path with every tile resident, the camera moved on every render event, vsync and the frame-rate limit off.`,
+      description: `Mean time per frame over the ${raw.protocol.warmSteps}-step camera path with every tile resident, the camera moved on every render event, vsync and the frame-rate limit off; tile requests during it are reported beside the timings.`,
       unit: "ms",
       lowerIsBetter: true,
       results: ids.map((id) => ({ candidateId: id, value: round(avg(perPass(raw, id, (r) => avg(r.warmStepsMs))), 2) })),
