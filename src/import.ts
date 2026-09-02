@@ -243,7 +243,7 @@ export function buildMemorySection(raw: RawResults): BenchmarkSection {
     {
       id: "memory-after-path",
       title: "After the camera path",
-      description: `Renderer and GPU process memory over a blank page after the ${raw.protocol.coldViews}-view cold pan, with the tile cache raised so nothing was evicted.`,
+      description: `Renderer and GPU process memory over a blank page after the ${raw.protocol.coldViews}-view cold pan, with each library's default tile cache.`,
       unit: "MB",
       lowerIsBetter: true,
       results: ids.map((id) => ({ candidateId: id, value: round(avg(delta(id, "afterPath")), 1) })),
@@ -313,7 +313,7 @@ if (import.meta.main) {
       warmups: raw.protocol.warmups,
       runs: raw.protocol.passes,
       processModel: `One Chromium process for startup and frame time, fresh browser context per pass, candidates interleaved and rotated each pass; ${raw.protocol.memorySamples} memory samples with a fresh browser process each; every request outside loopback fails at the resolver and any attempt invalidates the run`,
-      cacheState: `Fresh context per pass, no HTTP cache; maxTileCacheSize ${raw.protocol.mapOptions.maxTileCacheSize} so the warm traversal is warm; tiles served gzip from one MBTiles by the harness`,
+      cacheState: `Fresh context per pass, no HTTP cache; timing passes run with maxTileCacheSize ${raw.protocol.mapOptions.maxTileCacheSize} so the warm traversal is warm, memory samples with each library's default tile cache; tiles served gzip from one MBTiles by the harness`,
       output: "The map's own events timed with performance.now() under cross-origin isolation; Playwright screenshots and queryRenderedFeatures for the parity gate; process memory from the OS",
     },
   };

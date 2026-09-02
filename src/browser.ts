@@ -87,6 +87,7 @@ export interface BenchContext {
   violations: Violation[];
   pageErrors: string[];
   consoleErrors: string[];
+  consoleWarnings: number;
 }
 
 /** A fresh context with the benchmark viewport, request policing, and error capture. */
@@ -100,14 +101,20 @@ export async function newBenchContext(browser: Browser, origin: string, candidat
   const violations: Violation[] = [];
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
+  const out = { context, page, violations, pageErrors, consoleErrors, consoleWarnings: 0 };
   page.on("request", (req) => {
     const url = req.url();
     if (url.startsWith(origin + "/") || url.startsWith("blob:") || url.startsWith("data:")) return;
     violations.push({ candidate, phase: phase(), url });
   });
   page.on("pageerror", (err) => pageErrors.push(err.message));
+  page.on("crash", () => pageErrors.push("PAGE CRASHED (renderer process died)"));
+  context.on("close", () => {
+    if (!browser.isConnected()) pageErrors.push("BROWSER DISCONNECTED");
+  });
   page.on("console", (msg) => {
     if (msg.type() === "error") consoleErrors.push(msg.text());
+    if (msg.type() === "warning") out.consoleWarnings++;
   });
-  return { context, page, violations, pageErrors, consoleErrors };
+  return out;
 }

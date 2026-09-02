@@ -15,6 +15,7 @@ function pass(idle: number, warm: number): PassResult {
     glyphRequests: 10,
     pageErrors: [],
     mapErrors: [],
+    consoleWarnings: 0,
   };
 }
 
@@ -36,7 +37,8 @@ const raw: RawResults = {
     memorySamples: 2,
     idleTimeoutMs: 1000,
     viewport: { width: 1280, height: 800, deviceScaleFactor: 1 },
-    mapOptions: { maxTileCacheSize: 10000, fadeDuration: 300, attributionControl: false, interactive: false, trackResize: false },
+    mapOptions: { fadeDuration: 300, attributionControl: false, interactive: false, trackResize: false, maxTileCacheSize: 10000 },
+    memoryMapOptions: { fadeDuration: 300, attributionControl: false, interactive: false, trackResize: false },
     gate: { relativeTolerance: 0.1, absoluteTolerance: 5, symbolRelativeTolerance: 0.25, pixelThreshold: 0.1 },
     reference: "mapbox-gl-1-13",
     coldAdvance: "",

@@ -5,7 +5,7 @@ import type { Browser } from "playwright";
 import { assertGpu, chromiumArgs, gpuInfo, launch, newBenchContext, type GpuInfo, type Violation } from "./browser";
 import { START, VIEWPOINTS, cameraPath, type CameraState } from "./camera";
 import { compareCounts, pixelDiff, type CountViolation, type Counts } from "./gate";
-import { CANDIDATES, CANDIDATE_ORDER, GATE, MAP_OPTIONS, REFERENCE, VIEWPORT, protocol, type CandidateId, type CandidateMeta, type Protocol } from "./matrix";
+import { CANDIDATES, CANDIDATE_ORDER, GATE, MAP_OPTIONS, MEMORY_MAP_OPTIONS, REFERENCE, VIEWPORT, protocol, type CandidateId, type CandidateMeta, type Protocol } from "./matrix";
 import { processBytes, type ProcessBytes } from "./memory";
 import { rigInfo, type RigInfo } from "./rig";
 import { startServer, type BenchServer } from "./server";
@@ -30,6 +30,7 @@ export interface PassResult {
   glyphRequests: number;
   pageErrors: string[];
   mapErrors: string[];
+  consoleWarnings: number;
 }
 
 export interface MemorySample {
@@ -78,6 +79,7 @@ export interface RawResults {
   protocol: Protocol & {
     viewport: typeof VIEWPORT;
     mapOptions: typeof MAP_OPTIONS;
+    memoryMapOptions: typeof MEMORY_MAP_OPTIONS;
     gate: typeof GATE;
     reference: CandidateId;
     coldAdvance: string;
@@ -214,6 +216,7 @@ async function measurePass(
       glyphRequests: c.glyphs,
       pageErrors: [...ctx.pageErrors, ...ctx.consoleErrors],
       mapErrors,
+      consoleWarnings: ctx.consoleWarnings,
     };
   } finally {
     await ctx.context.close();
@@ -235,7 +238,7 @@ async function measureMemory(server: BenchServer, id: CandidateId | null, proto:
     const meta = CANDIDATES[id];
     await ctx.page.goto(`${server.origin}/?candidate=${id}`, { waitUntil: "load" });
     await ctx.page.evaluate((m) => (window as any).bench.loadLib(m), { id: meta.id, kind: meta.kind, js: meta.js, css: meta.css, global: meta.global ?? null });
-    await ctx.page.evaluate((cfg) => (window as any).bench.start(cfg), { state: START, options: MAP_OPTIONS, idleTimeoutMs: proto.idleTimeoutMs });
+    await ctx.page.evaluate((cfg) => (window as any).bench.start(cfg), { state: START, options: MEMORY_MAP_OPTIONS, idleTimeoutMs: proto.idleTimeoutMs });
     await ctx.page.waitForTimeout(1000);
     await gc();
     const heapIdle = (await ctx.page.evaluate(() => (window as any).bench.jsHeap())) as { bytes: number; scope: string } | null;
@@ -295,11 +298,12 @@ async function main(): Promise<void> {
       ...proto,
       viewport: VIEWPORT,
       mapOptions: MAP_OPTIONS,
+      memoryMapOptions: MEMORY_MAP_OPTIONS,
       gate: GATE,
       reference: REFERENCE,
       coldAdvance: "jumpTo, then wait for the map's idle event",
       warmAdvance: "jumpTo, then wait for the map's render event, after an idle-advanced priming traversal of the same steps",
-      memoryMeasure: process.platform === "win32" ? "private bytes of the renderer and GPU processes, fresh browser process per sample, minus a blank-page baseline" : "RSS of the renderer and GPU processes, fresh browser process per sample, minus a blank-page baseline",
+      memoryMeasure: process.platform === "win32" ? "private bytes of the renderer and GPU processes, fresh browser process per sample, minus a blank-page baseline" : "RSS of the renderer and GPU processes, fresh browser process per sample, minus a blank-page baseline" + "; default tile cache",
     },
     candidates: args.candidates.map((id) => ({ ...CANDIDATES[id], bytes: bundleBytes(root, CANDIDATES[id]), libraryVersion: null, workerCount: null })),
     passes: [],
@@ -408,6 +412,8 @@ async function main(): Promise<void> {
     console.log("\nRUN INVALID: gate, network block or a failure tripped; results.json written for inspection only.");
     process.exit(2);
   }
+  // Explicit exit: a browser that died mid-sample can leave a handle that keeps the event loop alive, and an ssh session waiting on it.
+  process.exit(0);
 }
 
 if (import.meta.main) await main();

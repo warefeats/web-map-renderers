@@ -90,14 +90,27 @@ export function protocol(smoke: boolean): Protocol {
 
 export const VIEWPORT = { width: 1280, height: 800, deviceScaleFactor: 1 } as const;
 
-/** Map constructor options every candidate gets. maxTileCacheSize is raised so the warm traversal is warm; the rest are the shared defaults, spelled out. */
-export const MAP_OPTIONS = {
-  maxTileCacheSize: 10_000,
+/** Map constructor options shared by every candidate: the defaults, spelled out. */
+export const BASE_MAP_OPTIONS = {
   fadeDuration: 300,
   attributionControl: false,
   interactive: false,
   trackResize: false,
 } as const;
+
+/**
+ * Options for the timing passes. The tile cache is raised so the warm traversal really is warm: the camera path
+ * touches about 300 tiles and the default cache holds a fraction of that, which would turn the warm paint into a
+ * refetch test.
+ */
+export const MAP_OPTIONS = { ...BASE_MAP_OPTIONS, maxTileCacheSize: 10_000 } as const;
+
+/**
+ * Options for the memory samples: each library's default tile cache, which is what a user's browser holds. With
+ * the enlarged cache every candidate retains every tile it ever fetched and the number measures the protocol, not
+ * the renderer.
+ */
+export const MEMORY_MAP_OPTIONS = BASE_MAP_OPTIONS;
 
 /**
  * Parity gate tolerances. A source layer's distinct rendered-feature count may differ from the reference by 10% or

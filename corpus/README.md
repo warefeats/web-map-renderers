@@ -23,3 +23,7 @@ Everything the three renderers are fed, pinned so that a reader can rebuild it. 
 ## Licences
 
 Map data: OpenStreetMap contributors, ODbL. OSM Bright: BSD-3-Clause (`style/LICENSE.md`). Noto Sans: SIL Open Font License 1.1. planetiler: Apache-2.0. Natural Earth: public domain.
+
+## Known gap in the style
+
+OSM Bright names POI icons `{class}_11` from the OpenMapTiles `poi` layer, and its sprite ships 103 icons, so classes such as `office`, `parking`, `atm`, `hairdresser` and `yoga` have no icon. Every renderer logs an "image could not be loaded" warning for each such class and draws the label without an icon. The gap is upstream, identical for all candidates, and left as is: the corpus is the style as published, not a corrected one. Warning counts per pass are recorded in the run file.
