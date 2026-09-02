@@ -17,6 +17,14 @@
     "MapLibre is a project of the MapLibre organization; maplibre-gl is BSD-3-Clause.",
     "Map data: OpenStreetMap contributors, ODbL, via the Geofabrik Berlin extract of 2026-01-01, cut with planetiler. Style: OSM Bright by OpenMapTiles, BSD-3-Clause. Glyphs: Noto Sans, SIL Open Font License."
   ],
-  "limitations": [],
+  "limitations": [
+    "One GPU, one operating system, one browser build: an integrated AMD Radeon on Windows 11 in Playwright's Chromium headless shell. Ratios on Apple silicon, on a discrete NVIDIA card, or in Firefox will differ.",
+    "Renderer only. Mapbox's hosted data, the Standard style, its CDN and its current SDK are not measured, because Mapbox's Product Terms forbid using current Mapbox GL JS in a comparison with a substitute; the Mapbox candidate is the last BSD-licensed release, which is also the code MapLibre forked.",
+    "One style, OSM Bright, with no globe, terrain, hillshade or 3D buildings, so features one build has and another lacks are not exercised.",
+    "Frame time is unthrottled and headless: relative renderer cost per frame with the camera moving every frame, not what a 60 Hz screen shows a user.",
+    "Memory is renderer plus GPU process private bytes over a blank page; GPU-dedicated memory is not separately measured, and the JS heap figure includes workers only where the browser reports it.",
+    "mapbox-gl 1.13.3 renders through WebGL 1 and the MapLibre builds through WebGL 2, because that is what each artifact does; nothing was patched to equalize it.",
+    "Fifteen passes on one machine on one day; every sample is in the run file."
+  ],
   "runs": []
 }
