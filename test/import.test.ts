@@ -5,6 +5,7 @@ import type { PassResult, RawResults } from "../src/run";
 function pass(idle: number, warm: number): PassResult {
   return {
     startup: { importMs: 50, styleLoadMs: 100, firstTileMs: 200, loadMs: 400, firstIdleMs: idle },
+    startupNoFade: { importMs: 50, styleLoadMs: 100, firstTileMs: 200, loadMs: idle / 2, firstIdleMs: idle / 2 + 5 },
     geojsonMs: 300,
     geojsonFeatures: 5000,
     coldViewsMs: Array.from({ length: 12 }, (_, i) => 40 + i),
@@ -90,7 +91,7 @@ describe("import", () => {
     const run = buildRun(raw, meta);
     expect(run.sections.map((s) => s.id)).toEqual(["startup", "frame-time"]);
     const startup = run.sections[0]!;
-    expect(startup.candidates[0]!.samplesMs).toEqual([1200, 1300]);
+    expect(startup.candidates[0]!.samplesMs).toEqual([600, 650]);
     expect(startup.verdict.winnerId).toBe("maplibre-gl-6");
     const frame = run.sections[1]!;
     expect(frame.verdict.winnerId).toBe("maplibre-gl-6");

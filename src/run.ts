@@ -20,6 +20,8 @@ export interface StartupMarks {
 
 export interface PassResult {
   startup: StartupMarks;
+  /** The same marks from a second fresh context with fadeDuration 0, so that load and idle mean "everything drawn" in every build. */
+  startupNoFade: StartupMarks;
   geojsonMs: number;
   geojsonFeatures: number;
   coldViewsMs: number[];
@@ -157,6 +159,9 @@ function rotate<T>(items: T[], by: number): T[] {
   return [...items.slice(k), ...items.slice(0, k)];
 }
 
+/** Pause on a blank page before every startup measurement, so the previous context's teardown has finished. */
+const SETTLE_MS = 2000;
+
 const log = (msg: string) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${msg}`);
 
 /** Every call into the browser gets a hard deadline: a frozen page must never hang the run. */
@@ -200,8 +205,12 @@ async function measurePass(
   let phase = "navigate";
   const ctx = await newBenchContext(browser, server.origin, id, () => phase);
   try {
+    // Every startup measurement begins from a settled browser: the previous context's teardown (hundreds of tiles,
+    // a worker) otherwise overlaps the new map's first frames.
+    await deadline(phase, 60_000, ctx.page.goto(`${server.origin}/blank.html`, { waitUntil: "load" }));
+    await ctx.page.waitForTimeout(SETTLE_MS);
     server.resetCounters();
-    await ctx.page.goto(`${server.origin}/?candidate=${id}`, { waitUntil: "load" });
+    await deadline(phase, 60_000, ctx.page.goto(`${server.origin}/?candidate=${id}`, { waitUntil: "load" }));
     phase = "import";
     const lib = (await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate((m) => (window as any).bench.loadLib(m), { id: meta.id, kind: meta.kind, js: meta.js, css: meta.css, global: meta.global ?? null }))) as {
       importMs: number;
@@ -240,9 +249,26 @@ async function measurePass(
     const warmTileRequests = server.counters.tiles;
     const mapErrors = (await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate(() => (window as any).bench.errors.slice()))) as string[];
     violations.push(...ctx.violations);
+    // Startup again with fades off, in its own fresh context: mapbox-gl 1.13 holds load and idle until its 300 ms
+    // fades finish and MapLibre does not, so this is the mark that means the same thing in every build.
+    phase = "startup-nofade";
+    const ctx2 = await newBenchContext(browser, server.origin, id, () => phase);
+    let startupNoFade: StartupMarks;
+    try {
+      await deadline(phase, 60_000, ctx2.page.goto(`${server.origin}/blank.html`, { waitUntil: "load" }));
+      await ctx2.page.waitForTimeout(SETTLE_MS);
+      await deadline(phase, 60_000, ctx2.page.goto(`${server.origin}/?candidate=${id}`, { waitUntil: "load" }));
+      const lib2 = (await deadline(phase, 60_000, ctx2.page.evaluate((m) => (window as any).bench.loadLib(m), { id: meta.id, kind: meta.kind, js: meta.js, css: meta.css, global: meta.global ?? null }))) as { importMs: number };
+      const marks = (await deadline(phase, proto.idleTimeoutMs + 30_000, ctx2.page.evaluate((cfg) => (window as any).bench.start(cfg), { state: START, options: { ...MAP_OPTIONS, fadeDuration: 0 }, idleTimeoutMs: proto.idleTimeoutMs }))) as StartupMarks;
+      startupNoFade = { ...marks, importMs: lib2.importMs };
+      violations.push(...ctx2.violations);
+    } finally {
+      await closeQuietly(ctx2.context, null);
+    }
     const c = { tiles: before.tiles + server.counters.tiles, tilesMissing: before.tilesMissing + server.counters.tilesMissing, tileBytes: before.tileBytes + server.counters.tileBytes, glyphs: server.counters.glyphs };
     return {
       startup: { ...startup, importMs: lib.importMs },
+      startupNoFade,
       geojsonMs: geojson.ms,
       geojsonFeatures: geojson.features,
       coldViewsMs,

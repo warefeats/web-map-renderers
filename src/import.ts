@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { CANDIDATES, CANDIDATE_ORDER, type CandidateId } from "./matrix";
-import type { PassResult, RawResults } from "./run";
+import type { PassResult, RawResults, StartupMarks } from "./run";
 import { type Statistics, mean, percentile, round, statistics } from "./stats";
 
 export interface Environment {
@@ -122,12 +122,15 @@ export function buildStartupSection(raw: RawResults): BenchmarkSection {
     { key: "importMs", id: "import", title: "Bundle import", description: "Script or module tag inserted until the library has evaluated, from the loopback server." },
     { key: "styleLoadMs", id: "style-load", title: "Style load", description: "Map constructed until the style.load event: style JSON fetched and parsed, layers created." },
     { key: "firstTileMs", id: "first-tile", title: "First tile", description: "Map constructed until the first vector tile has been fetched and parsed by a worker." },
-    { key: "loadMs", id: "load", title: "Load", description: "Map constructed until the load event: every tile in the initial view fetched, parsed and drawn once." },
-    { key: "firstIdleMs", id: "first-idle", title: "First idle", description: "Map constructed until the first idle event after load: label placement done, fades complete, nothing left to render." },
+    { key: "loadMs", id: "load", title: "Load, default fade", description: "Map constructed until the load event with the default 300 ms fade. mapbox-gl 1.13 holds this event until its tile fade has finished; the MapLibre builds do not, so this mark is what each build reports, not the same amount of work." },
+    { key: "firstIdleMs", id: "first-idle", title: "First idle, default fade", description: "Map constructed until the first idle event after load with the default 300 ms fade. mapbox-gl 1.13 also holds idle until its label fade has finished; the MapLibre builds fire idle within a few milliseconds of load." },
   ];
+  const noFade = (id: CandidateId, key: keyof StartupMarks) => perPass(raw, id, (r) => r.startupNoFade?.[key] ?? null);
   const candidates = ids.map((id) => {
     const metrics: Record<string, Metric> = {};
     for (const m of marks) metrics[`${m.id}-mean`] = { value: round(avg(perPass(raw, id, (r) => r.startup[m.key])), 1), unit: "ms", label: `${m.title} mean` };
+    metrics["load-no-fade-mean"] = { value: round(avg(noFade(id, "loadMs")), 1), unit: "ms", label: "Load with fades off, mean" };
+    metrics["first-idle-no-fade-mean"] = { value: round(avg(noFade(id, "firstIdleMs")), 1), unit: "ms", label: "First idle with fades off, mean" };
     metrics["geojson-5k-mean"] = { value: round(avg(perPass(raw, id, (r) => r.geojsonMs)), 1), unit: "ms", label: "5,000 building polygons added until idle, mean" };
     const c = raw.candidates.find((x) => x.id === id)!;
     metrics["bundle-raw"] = { value: c.bytes.raw, unit: "B", label: "JavaScript served, uncompressed" };
@@ -136,35 +139,45 @@ export function buildStartupSection(raw: RawResults): BenchmarkSection {
     metrics["tile-requests"] = { value: round(avg(perPass(raw, id, (r) => r.tileRequests)), 0), unit: "requests", label: "Tile requests per pass" };
     const workers = perPass(raw, id, (r) => r.workerCount);
     if (workers.length) metrics["workers"] = { value: workers[0]!, unit: "workers", label: "Web Workers the library started by default" };
-    return base(id, perPass(raw, id, (r) => r.startup.firstIdleMs), metrics);
+    return base(id, noFade(id, "loadMs"), metrics);
   });
-  const tests: BenchmarkTest[] = marks.map((m) => ({
-    id: m.id,
-    title: m.title,
-    description: m.description,
-    unit: "ms",
-    lowerIsBetter: true,
-    results: ids.map((id) => ({ candidateId: id, value: round(avg(perPass(raw, id, (r) => r.startup[m.key])), 1) })),
-  }));
-  tests.push({
-    id: "geojson-5k",
-    title: "GeoJSON, 5,000 buildings",
-    description: "A pre-parsed FeatureCollection of 5,000 Berlin building footprints added as a fill layer to the idle map, until the next idle.",
-    unit: "ms",
-    lowerIsBetter: true,
-    results: ids.map((id) => ({ candidateId: id, value: round(avg(perPass(raw, id, (r) => r.geojsonMs)), 1) })),
-  });
+  const tests: BenchmarkTest[] = [
+    {
+      id: "load-no-fade",
+      title: "Load, fades off",
+      description: "Map constructed until the load event with fadeDuration 0: style, every tile in the view fetched and parsed, everything drawn once. The one startup mark that means the same amount of work in all three builds.",
+      unit: "ms",
+      lowerIsBetter: true,
+      results: ids.map((id) => ({ candidateId: id, value: round(avg(noFade(id, "loadMs")), 1) })),
+    },
+    ...marks.map((m) => ({
+      id: m.id,
+      title: m.title,
+      description: m.description,
+      unit: "ms",
+      lowerIsBetter: true,
+      results: ids.map((id) => ({ candidateId: id, value: round(avg(perPass(raw, id, (r) => r.startup[m.key])), 1) })),
+    })),
+    {
+      id: "geojson-5k",
+      title: "GeoJSON, 5,000 buildings",
+      description: "A pre-parsed FeatureCollection of 5,000 Berlin building footprints added as a fill layer to the idle map, until the next idle.",
+      unit: "ms",
+      lowerIsBetter: true,
+      results: ids.map((id) => ({ candidateId: id, value: round(avg(perPass(raw, id, (r) => r.geojsonMs)), 1) })),
+    },
+  ];
   const { best, worst } = rankByMean(candidates);
   return {
     id: "startup",
     title: "Startup timeline",
-    deck: "From script tag to a fully settled map of Berlin Mitte at z11, read from the events every build fires: bundle import, style load, first tile, load, first idle. Plus 5,000 GeoJSON polygons added to the settled map.",
+    deck: "From script tag to a drawn map of Berlin Mitte at z11, read from the events every build fires: bundle import, style load, first tile, load, first idle. The headline mark is load with fades off, because the builds disagree about whether a fade counts. Plus 5,000 GeoJSON polygons added to the settled map.",
     unit: "ms",
     lowerIsBetter: true,
     verdict: {
       winnerId: best.id,
-      headline: `${best.name} reached first idle in ${fmtMs(best.statistics.meanMs)} on average; ${worst.name} took ${fmtMs(worst.statistics.meanMs)} (${ratio(worst.statistics.meanMs, best.statistics.meanMs)})`,
-      summary: "Time from map construction to the first idle event, one sample per measured pass, fresh browser context every pass.",
+      headline: `${best.name} drew the first complete frame in ${fmtMs(best.statistics.meanMs)} on average; ${worst.name} took ${fmtMs(worst.statistics.meanMs)} (${ratio(worst.statistics.meanMs, best.statistics.meanMs)})`,
+      summary: "Time from map construction to the load event with fades off, one sample per measured pass, fresh browser context every pass.",
     },
     candidates,
     tests,
@@ -197,7 +210,7 @@ export function buildFrameTimeSection(raw: RawResults): BenchmarkSection {
     {
       id: "warm-paint",
       title: "Warm paint, per frame",
-      description: `Mean time per frame over the ${raw.protocol.warmSteps}-step camera path with every tile resident, the camera moved on every render event, vsync and the frame-rate limit off; tile requests during it are reported beside the timings.`,
+      description: `Mean time per frame over the ${raw.protocol.warmSteps}-step camera path, the camera moved on every render event, vsync and the frame-rate limit off. Every tile the cold pan loaded is resident; tiles only needed at intermediate camera states are still requested and abandoned as the camera moves on, and those requests are counted beside the timings and included in the frame time.`,
       unit: "ms",
       lowerIsBetter: true,
       results: ids.map((id) => ({ candidateId: id, value: round(avg(perPass(raw, id, (r) => avg(r.warmStepsMs))), 2) })),
