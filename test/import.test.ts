@@ -10,6 +10,7 @@ function pass(idle: number, warm: number): PassResult {
     coldViewsMs: Array.from({ length: 12 }, (_, i) => 40 + i),
     warmStepsMs: Array.from({ length: 60 }, (_, i) => warm + (i % 3) * 0.1),
     tileRequests: 120,
+    tilesMissing: 0,
     tileBytes: 1_000_000,
     glyphRequests: 10,
     pageErrors: [],

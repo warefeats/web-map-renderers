@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { compareCounts, type Counts } from "../src/gate";
 
-const counts = (bySourceLayer: Record<string, number>): Counts => ({ total: Object.values(bySourceLayer).reduce((a, b) => a + b, 0), bySourceLayer, byLayer: {}, zoom: 14 });
+const counts = (bySourceLayer: Record<string, number>): Counts => ({ total: Object.values(bySourceLayer).reduce((a, b) => a + b, 0), totalRaw: 0, bySourceLayer, bySourceLayerRaw: {}, byLayer: {}, zoom: 14 });
 
 describe("parity gate", () => {
   test("accepts counts within 10% of the reference", () => {
@@ -21,5 +21,16 @@ describe("parity gate", () => {
   test("flags a blank canvas", () => {
     const v = compareCounts("vp", "c", counts({ building: 1000, road: 200 }), counts({}));
     expect(v).toHaveLength(2);
+  });
+});
+
+describe("parity gate, symbol layers", () => {
+  test("gives label layers the wider tolerance but still catches a blank one", () => {
+    const { compareCounts: cmp } = require("../src/gate") as typeof import("../src/gate");
+    const c = (m: Record<string, number>) => ({ total: 0, totalRaw: 0, bySourceLayer: m, bySourceLayerRaw: {}, byLayer: {}, zoom: 15 });
+    expect(cmp("vp", "c", c({ poi: 85 }), c({ poi: 75 }))).toEqual([]);
+    expect(cmp("vp", "c", c({ poi: 85 }), c({ poi: 60 }))).toHaveLength(1);
+    expect(cmp("vp", "c", c({ poi: 85 }), c({}))).toHaveLength(1);
+    expect(cmp("vp", "c", c({ building: 85 }), c({ building: 75 }))).toHaveLength(1);
   });
 });

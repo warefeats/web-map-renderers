@@ -99,5 +99,13 @@ export const MAP_OPTIONS = {
   trackResize: false,
 } as const;
 
-/** Parity gate tolerances: a layer's rendered-feature count may differ from the reference by 10% or 5 features, whichever is larger. */
-export const GATE = { relativeTolerance: 0.1, absoluteTolerance: 5, pixelThreshold: 0.1 } as const;
+/**
+ * Parity gate tolerances. A source layer's distinct rendered-feature count may differ from the reference by 10% or
+ * 5 features, whichever is larger. Source layers drawn only by symbol layers get 25%, because label collision is a
+ * renderer decision (MapLibre 6 overscales four zoom levels past a source's maxzoom specifically to place labels
+ * differently); a blank canvas still trips it. Frozen after calibration on the first smoke run, 2026-09-02.
+ */
+export const GATE = { relativeTolerance: 0.1, absoluteTolerance: 5, symbolRelativeTolerance: 0.25, pixelThreshold: 0.1 } as const;
+
+/** OpenMapTiles source layers that OSM Bright draws only with symbol layers. */
+export const SYMBOL_ONLY_SOURCE_LAYERS = new Set(["poi", "place", "transportation_name", "water_name", "housenumber", "mountain_peak", "aerodrome_label"]);

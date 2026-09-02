@@ -25,6 +25,7 @@ export interface PassResult {
   coldViewsMs: number[];
   warmStepsMs: number[];
   tileRequests: number;
+  tilesMissing: number;
   tileBytes: number;
   glyphRequests: number;
   pageErrors: string[];
@@ -37,6 +38,7 @@ export interface MemorySample {
   afterPath: ProcessBytes;
   jsHeapAfterIdleBytes: number | null;
   jsHeapAfterPathBytes: number | null;
+  jsHeapScope: string | null;
 }
 
 export interface Pass {
@@ -207,6 +209,7 @@ async function measurePass(
       coldViewsMs,
       warmStepsMs,
       tileRequests: c.tiles,
+      tilesMissing: c.tilesMissing,
       tileBytes: c.tileBytes,
       glyphRequests: c.glyphs,
       pageErrors: [...ctx.pageErrors, ...ctx.consoleErrors],
@@ -217,7 +220,7 @@ async function measurePass(
   }
 }
 
-async function measureMemory(server: BenchServer, id: CandidateId | null, proto: Protocol, coldStates: CameraState[], args: string[]): Promise<{ bytes: ProcessBytes; afterPath?: ProcessBytes; heapIdle: number | null; heapPath: number | null }> {
+async function measureMemory(server: BenchServer, id: CandidateId | null, proto: Protocol, coldStates: CameraState[], args: string[]): Promise<{ bytes: ProcessBytes; afterPath?: ProcessBytes; heapIdle: number | null; heapPath: number | null; heapScope: string | null }> {
   const browser = await launch(args);
   const ctx = await newBenchContext(browser, server.origin, id ?? "baseline", () => "memory");
   try {
@@ -227,7 +230,7 @@ async function measureMemory(server: BenchServer, id: CandidateId | null, proto:
       await ctx.page.goto(`${server.origin}/blank.html`, { waitUntil: "load" });
       await ctx.page.waitForTimeout(1500);
       await gc();
-      return { bytes: await processBytes(browser), heapIdle: null, heapPath: null };
+      return { bytes: await processBytes(browser), heapIdle: null, heapPath: null, heapScope: null };
     }
     const meta = CANDIDATES[id];
     await ctx.page.goto(`${server.origin}/?candidate=${id}`, { waitUntil: "load" });
@@ -235,14 +238,14 @@ async function measureMemory(server: BenchServer, id: CandidateId | null, proto:
     await ctx.page.evaluate((cfg) => (window as any).bench.start(cfg), { state: START, options: MAP_OPTIONS, idleTimeoutMs: proto.idleTimeoutMs });
     await ctx.page.waitForTimeout(1000);
     await gc();
-    const heapIdle = (await ctx.page.evaluate(() => (window as any).bench.jsHeap())) as number | null;
+    const heapIdle = (await ctx.page.evaluate(() => (window as any).bench.jsHeap())) as { bytes: number; scope: string } | null;
     const bytes = await processBytes(browser);
     await ctx.page.evaluate((cfg) => (window as any).bench.traverseIdle(cfg.states, cfg.idleTimeoutMs), { states: coldStates, idleTimeoutMs: proto.idleTimeoutMs });
     await ctx.page.waitForTimeout(1000);
     await gc();
-    const heapPath = (await ctx.page.evaluate(() => (window as any).bench.jsHeap())) as number | null;
+    const heapPath = (await ctx.page.evaluate(() => (window as any).bench.jsHeap())) as { bytes: number; scope: string } | null;
     const afterPath = await processBytes(browser);
-    return { bytes, afterPath, heapIdle, heapPath };
+    return { bytes, afterPath, heapIdle: heapIdle?.bytes ?? null, heapPath: heapPath?.bytes ?? null, heapScope: heapIdle?.scope ?? heapPath?.scope ?? null };
   } finally {
     await ctx.context.close();
     await browser.close();
@@ -355,7 +358,7 @@ async function main(): Promise<void> {
         const baseline = await measureMemory(server, null, proto, coldStates, chromeArgs);
         for (const id of rotate(args.candidates, s)) {
           const m = await measureMemory(server, id, proto, coldStates, chromeArgs);
-          (results.memory[id] ??= []).push({ baseline: baseline.bytes, afterIdle: m.bytes, afterPath: m.afterPath!, jsHeapAfterIdleBytes: m.heapIdle, jsHeapAfterPathBytes: m.heapPath });
+          (results.memory[id] ??= []).push({ baseline: baseline.bytes, afterIdle: m.bytes, afterPath: m.afterPath!, jsHeapAfterIdleBytes: m.heapIdle, jsHeapAfterPathBytes: m.heapPath, jsHeapScope: m.heapScope });
           log(`memory ${s} ${id}: baseline ${baseline.bytes.total} MB, idle ${m.bytes.total} MB, after path ${m.afterPath!.total} MB (renderer ${m.afterPath!.renderer}, gpu ${m.afterPath!.gpu})`);
         }
       } catch (err) {
@@ -386,7 +389,8 @@ async function main(): Promise<void> {
       for (const id of args.candidates) for (const k of Object.keys(row[id]?.bySourceLayer ?? {})) layers.add(k);
       console.log(`  ${vp.title}`);
       console.log(`    ${"layer".padEnd(18)}${args.candidates.map((id) => id.padStart(16)).join("")}   pixel diff ${args.candidates.map((id) => `${((results.gate.pixelDiff[vp.id]?.[id] ?? 0) * 100).toFixed(1)}%`).join(" / ")}`);
-      for (const layer of [...layers].sort()) console.log(`    ${layer.padEnd(18)}${args.candidates.map((id) => String(row[id]?.bySourceLayer[layer] ?? 0).padStart(16)).join("")}`);
+      for (const layer of [...layers].sort()) console.log(`    ${layer.padEnd(18)}${args.candidates.map((id) => `${row[id]?.bySourceLayer[layer] ?? 0} (${row[id]?.bySourceLayerRaw[layer] ?? 0})`.padStart(16)).join("")}`);
+      console.log(`    (distinct features, raw query hits in parentheses)`);
     }
     console.log(results.gate.ok ? "  gate: ok" : `  gate: ${results.gate.violations.length} violation(s)`);
     for (const v of results.gate.violations) console.log(`    ${v.viewpoint} ${v.candidate} ${v.layer}: ${v.actual} vs reference ${v.reference} (allowed ±${v.allowed.toFixed(0)})`);

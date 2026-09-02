@@ -1,10 +1,14 @@
 import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
-import { GATE } from "./matrix";
+import { GATE, SYMBOL_ONLY_SOURCE_LAYERS } from "./matrix";
 
 export interface Counts {
+  /** Distinct features on screen. */
   total: number;
+  /** Raw query hits: the same feature once per tile piece and per style layer. */
+  totalRaw: number;
   bySourceLayer: Record<string, number>;
+  bySourceLayerRaw: Record<string, number>;
   byLayer: Record<string, number>;
   zoom: number;
 }
@@ -25,7 +29,8 @@ export function compareCounts(viewpoint: string, candidate: string, reference: C
   for (const layer of [...layers].sort()) {
     const ref = reference.bySourceLayer[layer] ?? 0;
     const act = actual.bySourceLayer[layer] ?? 0;
-    const allowed = Math.max(ref * tolerance.relativeTolerance, tolerance.absoluteTolerance);
+    const relative = SYMBOL_ONLY_SOURCE_LAYERS.has(layer) ? tolerance.symbolRelativeTolerance : tolerance.relativeTolerance;
+    const allowed = Math.max(ref * relative, tolerance.absoluteTolerance);
     if (Math.abs(act - ref) > allowed) out.push({ viewpoint, candidate, layer, reference: ref, actual: act, allowed });
   }
   return out;

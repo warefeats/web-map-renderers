@@ -165,27 +165,47 @@
     return { ms, features: data.features.length };
   };
 
-  // Parity gate input: rendered features at a viewpoint, grouped by source layer and by style layer.
+  // Parity gate input: DISTINCT rendered features at a viewpoint per source layer. A renderer that tiles the
+  // same data into more pieces (MapLibre 6 overscales up to four zoom levels of children past a source's maxzoom)
+  // returns the same feature once per piece and once per style layer; the gate asks what is on screen, so a feature
+  // is keyed by source layer, id and properties, or by its geometry when it has no id. Raw query hits are kept beside it.
   bench.viewAndCount = async (state, idleTimeoutMs) => {
     const idle = once(bench.map, "idle", idleTimeoutMs, "idle at viewpoint");
     bench.jumpTo(state);
     await idle;
     const features = bench.map.queryRenderedFeatures();
     const bySourceLayer = {};
+    const bySourceLayerRaw = {};
     const byLayer = {};
+    const seen = new Set();
     for (const f of features) {
       const sourceLayer = f.sourceLayer || (f.layer && f.layer["source-layer"]) || "(none)";
-      bySourceLayer[sourceLayer] = (bySourceLayer[sourceLayer] || 0) + 1;
+      bySourceLayerRaw[sourceLayer] = (bySourceLayerRaw[sourceLayer] || 0) + 1;
       const layerId = f.layer ? f.layer.id : "(none)";
       byLayer[layerId] = (byLayer[layerId] || 0) + 1;
+      const key =
+        f.id !== undefined && f.id !== null
+          ? sourceLayer + "|" + f.id + "|" + JSON.stringify(f.properties)
+          : sourceLayer + "|" + JSON.stringify(f.geometry && f.geometry.coordinates);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      bySourceLayer[sourceLayer] = (bySourceLayer[sourceLayer] || 0) + 1;
     }
-    return { total: features.length, bySourceLayer, byLayer, zoom: bench.map.getZoom() };
+    return { total: seen.size, totalRaw: features.length, bySourceLayer, bySourceLayerRaw, byLayer, zoom: bench.map.getZoom() };
   };
 
-  // JS heap including dedicated workers; needs cross-origin isolation, which the server provides.
+  // JS heap. measureUserAgentSpecificMemory covers workers but is not available in every build; the main-thread
+  // figure from performance.memory is the fallback. Never throws: a missing probe is a null, not a failed sample.
   bench.jsHeap = async () => {
-    if (!performance.measureUserAgentSpecificMemory) return null;
-    const m = await performance.measureUserAgentSpecificMemory();
-    return m.bytes;
+    try {
+      if (performance.measureUserAgentSpecificMemory) {
+        const m = await performance.measureUserAgentSpecificMemory();
+        return { bytes: m.bytes, scope: "agent" };
+      }
+    } catch (_) {}
+    try {
+      if (performance.memory && performance.memory.usedJSHeapSize) return { bytes: performance.memory.usedJSHeapSize, scope: "main-thread" };
+    } catch (_) {}
+    return null;
   };
 })();
