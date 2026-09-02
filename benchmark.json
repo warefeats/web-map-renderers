@@ -30,6 +30,6 @@
     "Fifteen timing passes and fifteen memory samples on one machine on one day, the timing and memory phases run as separate processes; every sample is in the run file."
   ],
   "runs": [
-    "runs/2026-09-02-amd-radeon-graphics.json"
+    "runs/2026-09-02-radeon-680m-win11.json"
   ]
 }

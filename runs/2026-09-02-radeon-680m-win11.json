@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "id": "2026-09-02-amd-radeon-graphics",
-  "label": "AMD Radeon(TM) Graphics / Microsoft Windows 11 Pro 24H2 (local)",
+  "id": "2026-09-02-radeon-680m-win11",
+  "label": "Radeon 680M / Windows 11 (local)",
   "publishedAt": "2026-09-02",
   "environment": {
-    "machine": "BOSGAME LIMITED EffiZen Series",
+    "machine": "BOSGAME EffiZen ARB19B mini PC",
     "chip": "AMD Ryzen 7 6800H with Radeon Graphics",
     "cores": "8 cores / 16 threads",
     "memory": "24 GB at 4800 MT/s",
     "os": "Microsoft Windows 11 Pro 24H2 (build 26100)",
     "arch": "x64",
     "runtime": "Playwright 1.62.1 Chromium 151.0.7922.34 headless shell; Bun 1.4.0 harness and loopback static server",
-    "gpu": "AMD Radeon(TM) Graphics, driver 32.0.12033.1030 (2024-11-26)",
+    "gpu": "AMD Radeon 680M, integrated in the Ryzen 7 6800H, driver 32.0.12033.1030 (2024-11-26)",
     "browser": "Chromium 151.0.7922.34, ANGLE (AMD, AMD Radeon(TM) Graphics (0x00001681) Direct3D11 vs_5_0 ps_5_0, D3D11); flags --use-angle=d3d11 --use-gl=angle --ignore-gpu-blocklist --disable-gpu-vsync --disable-frame-rate-limit --disable-background-timer-throttling --disable-renderer-backgrounding",
     "display": "1280x800 at 1x, offscreen; 1920x1080 at 59 Hz attached"
   },
