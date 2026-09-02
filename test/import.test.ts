@@ -37,7 +37,7 @@ const raw: RawResults = {
     idleTimeoutMs: 1000,
     viewport: { width: 1280, height: 800, deviceScaleFactor: 1 },
     mapOptions: { maxTileCacheSize: 10000, fadeDuration: 300, attributionControl: false, interactive: false, trackResize: false },
-    gate: { relativeTolerance: 0.1, absoluteTolerance: 5, pixelThreshold: 0.1 },
+    gate: { relativeTolerance: 0.1, absoluteTolerance: 5, symbolRelativeTolerance: 0.25, pixelThreshold: 0.1 },
     reference: "mapbox-gl-1-13",
     coldAdvance: "",
     warmAdvance: "",
