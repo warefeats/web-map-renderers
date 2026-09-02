@@ -78,6 +78,16 @@ export function validateResults(raw: unknown): RawResults {
   return raw as RawResults;
 }
 
+/** A memory-only run has no passes; it needs a schema, a rig, a browser and at least one candidate's samples. */
+export function validateMemoryResults(raw: unknown): RawResults {
+  if (!raw || typeof raw !== "object") throw new Error("memory results: not an object");
+  const r = raw as Partial<RawResults>;
+  if (r.schemaVersion !== 1) throw new Error("memory results: unsupported schemaVersion");
+  if (!r.memory || typeof r.memory !== "object" || Object.keys(r.memory).length === 0) throw new Error("memory results: no memory samples");
+  if (!r.rig || !r.browser || !r.protocol) throw new Error("memory results: rig, browser or protocol missing");
+  return raw as RawResults;
+}
+
 export function candidateIds(raw: RawResults): CandidateId[] {
   const present = new Set(raw.candidates.map((c) => c.id));
   return CANDIDATE_ORDER.filter((id) => present.has(id));
@@ -310,7 +320,7 @@ if (import.meta.main) {
   // phase alone, on the same rig and build, so a lost memory sample does not cost the timing passes a rerun.
   const memoryArg = flag("memory-results");
   if (memoryArg) {
-    const mem = validateResults(await Bun.file(resolve(memoryArg)).json());
+    const mem = validateMemoryResults(await Bun.file(resolve(memoryArg)).json());
     if (mem.rig.gpu !== raw.rig.gpu || mem.browser.chromium !== raw.browser.chromium) throw new Error("memory results come from a different rig or browser build");
     raw.memory = mem.memory;
     raw.browserRelaunches = mem.browserRelaunches ?? [];
