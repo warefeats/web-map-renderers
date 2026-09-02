@@ -232,6 +232,8 @@ export function buildMemorySection(raw: RawResults): BenchmarkSection {
       "gpu-after-path": { value: round(avg((raw.memory[id] ?? []).map((m) => m.afterPath.gpu - m.baseline.gpu)), 1), unit: "MB", label: "GPU process over baseline after the camera path" },
       "js-heap-after-idle": { value: round(avg(heap(id, "jsHeapAfterIdleBytes")), 1), unit: "MB", label: "JS heap including workers after first idle" },
       "js-heap-after-path": { value: round(avg(heap(id, "jsHeapAfterPathBytes")), 1), unit: "MB", label: "JS heap including workers after the camera path" },
+      "memory-samples": { value: (raw.memory[id] ?? []).length, unit: "samples", label: "Memory samples measured" },
+      "browser-relaunches": { value: (raw.browserRelaunches ?? []).filter((r) => r.candidate === id).length, unit: "relaunches", label: "Fresh browsers that died and were relaunched during memory sampling" },
     }),
   );
   const tests: BenchmarkTest[] = [
@@ -290,6 +292,18 @@ if (import.meta.main) {
   const flag = (name: string) => argv.find((a) => a.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
   const resultsPath = flag("results") ? resolve(flag("results")!) : join(root, "results.json");
   const raw = validateResults(await Bun.file(resultsPath).json());
+  // --memory-results=<file>: take the memory samples (and their relaunch count) from a separate run of the memory
+  // phase alone, on the same rig and build, so a lost memory sample does not cost the timing passes a rerun.
+  const memoryArg = flag("memory-results");
+  if (memoryArg) {
+    const mem = validateResults(await Bun.file(resolve(memoryArg)).json());
+    if (mem.rig.gpu !== raw.rig.gpu || mem.browser.chromium !== raw.browser.chromium) throw new Error("memory results come from a different rig or browser build");
+    raw.memory = mem.memory;
+    raw.browserRelaunches = mem.browserRelaunches ?? [];
+    raw.protocol.memorySamples = mem.protocol.memorySamples;
+    raw.protocol.memoryMeasure = mem.protocol.memoryMeasure;
+    console.log(`memory samples taken from ${memoryArg} (${mem.protocol.memorySamples} samples, ${raw.browserRelaunches.length} relaunches)`);
+  }
   if (raw.smoke) console.warn("warning: importing a SMOKE run");
   if (!raw.gate.ok) console.warn("warning: the parity gate did not pass; this run is not publishable");
   const publishedAt = raw.generatedAt.split("T")[0]!;

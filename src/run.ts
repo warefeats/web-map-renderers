@@ -100,6 +100,8 @@ export interface RawResults {
     ok: boolean;
   };
   memory: Partial<Record<CandidateId, MemorySample[]>>;
+  /** Memory samples whose fresh browser died and were relaunched; the count is reported, the sample is redone. */
+  browserRelaunches: { sample: number; candidate: CandidateId | null; attempt: number; message: string }[];
   violations: Violation[];
   failures: Failure[];
 }
@@ -322,6 +324,7 @@ async function main(): Promise<void> {
     passes: [],
     gate: { pass: null, viewpoints: {}, pixelDiff: {}, violations: [], ok: true },
     memory: {},
+    browserRelaunches: [],
     violations: [],
     failures: [],
   };
@@ -370,18 +373,33 @@ async function main(): Promise<void> {
   results.gate.ok = results.gate.violations.length === 0 && args.candidates.includes(refId);
 
   if (proto.memorySamples > 0) {
+    // A fresh browser in a non-interactive Windows session occasionally loses its page at launch or under load, for
+    // any candidate. A dead browser is relaunched up to twice and the sample redone from scratch; the relaunch is
+    // counted in the results. Only a sample that fails three times is recorded as a failure.
+    const withRelaunch = async <T>(s: number, id: CandidateId | null, fn: () => Promise<T>): Promise<T> => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await fn();
+        } catch (err) {
+          const message = (err instanceof Error ? err.message : String(err)).split("\n")[0]!;
+          if (attempt >= 2) throw err;
+          results.browserRelaunches.push({ sample: s, candidate: id, attempt: attempt + 1, message });
+          log(`memory ${s} ${id ?? "baseline"}: browser died (${message}); relaunching, attempt ${attempt + 2}`);
+        }
+      }
+    };
     for (let s = 0; s < proto.memorySamples; s++) {
       try {
-        const baseline = await measureMemory(server, null, proto, coldStates, chromeArgs);
+        const baseline = await withRelaunch(s, null, () => measureMemory(server, null, proto, coldStates, chromeArgs));
         for (const id of rotate(args.candidates, s)) {
-          const m = await measureMemory(server, id, proto, coldStates, chromeArgs);
+          const m = await withRelaunch(s, id, () => measureMemory(server, id, proto, coldStates, chromeArgs));
           (results.memory[id] ??= []).push({ baseline: baseline.bytes, afterIdle: m.bytes, afterPath: m.afterPath!, jsHeapAfterIdleBytes: m.heapIdle, jsHeapAfterPathBytes: m.heapPath, jsHeapScope: m.heapScope });
           log(`memory ${s} ${id}: baseline ${baseline.bytes.total} MB, idle ${m.bytes.total} MB, after path ${m.afterPath!.total} MB (renderer ${m.afterPath!.renderer}, gpu ${m.afterPath!.gpu})`);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         results.failures.push({ candidate: null, pass: s, phase: "memory", message });
-        log(`memory sample ${s}: FAILED ${message}`);
+        log(`memory sample ${s}: FAILED ${message.split("\n")[0]}`);
       }
     }
   }

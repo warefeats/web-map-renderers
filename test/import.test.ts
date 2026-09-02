@@ -72,6 +72,7 @@ const raw: RawResults = {
   ],
   gate: { pass: 1, viewpoints: {}, pixelDiff: {}, violations: [], ok: true },
   memory: {},
+  browserRelaunches: [],
   violations: [],
   failures: [],
 };
