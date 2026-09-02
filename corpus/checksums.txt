@@ -1,0 +1,49 @@
+# checksums.txt — SHA-256 of every corpus input and output, in `shasum -a 256` / `sha256sum` format
+# ("<hex>  <path>", paths relative to corpus/). After ./fetch.sh and ./build-tiles.sh, verify everything with
+#   cd corpus && shasum -a 256 -c checksums.txt
+# (comment lines are ignored; GNU sha256sum prints a formatting warning for them but still checks every entry).
+#
+# ---- Pinned inputs: fetch.sh enforces these and refuses to continue on a mismatch ----
+# berlin-260101.osm.pbf: Geofabrik Berlin extract, 2026-01-01 (osmosis replication seq 4645, 2026-01-01T21:21:30Z).
+#   MD5 as published by Geofabrik: 6d6de8da2d8192c5bbe7dd00e1004c82
+9a5dff3801473f7d59dc41cad2224c6f590d7d0cb9d8dc0789970902f13c6e94  cache/berlin-260101.osm.pbf
+# openmaptiles/osm-bright-gl-style @ 563b249f7ae71528b1f1e327cb9c019d0dda4c50 (master, 2026-08-04)
+f22ea32155549fb694581d3623ecbb32edea68f599e19861f06b4c62d1d524ce  cache/upstream-style/style.json
+aa25033b12c9cbf8c2d95a310c66ce08727c01139d23de6df5ae97505fb98f82  cache/upstream-style/LICENSE.md
+# osm-bright-gl-style sprites, gh-pages build @ 286b174adbd6e8693887841d6cfdf7445cd5f8c0 (2026-08-04T08:21Z), fetched 2026-09-02
+73586a1c10e60b536a3a7b8b3d4e70cd4e6ffa6afe801ff1cb08f38bf38d7cb0  cache/sprites/sprite.json
+66f12c218af7bada52ccd319013f73c570f3fe1b90d2c79e26bb4d30f7a121f8  cache/sprites/sprite.png
+89bc79bdad0a0351cab255c8db20485f741c9f606e98f564f6918c0a44845809  cache/sprites/sprite@2x.json
+c26647b95eb807beb0c7d9439d4a02468e7c19aa8f665b5e8580794fbfc0478a  cache/sprites/sprite@2x.png
+# openmaptiles/fonts release v2.0, noto-sans.zip (61,899,817 bytes; Noto Sans Regular / Bold / Italic, 256 ranges each)
+d117316544b43a5dde7ee761b36e17701e9f85574e181d76a74814240fdbaf34  cache/noto-sans.zip
+#
+# ---- Committed derived files (style/ is staged by fetch.sh + rewrite-style.ts; fixtures/ by extract-buildings.ts) ----
+139bf3aa0b88b393e586923258fcec7f077629c505c7b46976fffcb1e3102433  style/osm-bright.json
+aa25033b12c9cbf8c2d95a310c66ce08727c01139d23de6df5ae97505fb98f82  style/LICENSE.md
+73586a1c10e60b536a3a7b8b3d4e70cd4e6ffa6afe801ff1cb08f38bf38d7cb0  style/sprite.json
+66f12c218af7bada52ccd319013f73c570f3fe1b90d2c79e26bb4d30f7a121f8  style/sprite.png
+89bc79bdad0a0351cab255c8db20485f741c9f606e98f564f6918c0a44845809  style/sprite@2x.json
+c26647b95eb807beb0c7d9439d4a02468e7c19aa8f665b5e8580794fbfc0478a  style/sprite@2x.png
+8fe52081ddbd9183b594fbf5d12cc4419663c4f7e68a551522e4948f13b2087e  fixtures/buildings-5k.geojson
+#
+# ---- planetiler sources, downloaded by build-tiles.sh (planetiler --download) on 2026-09-02 ----
+# Only the lake-centerlines URL is versioned upstream; naciscdn.org and osmdata.openstreetmap.de republish under the
+# same URL, so a download on another day can differ. Keep cache/sources/ to rebuild the same tiles.
+# https://github.com/acalcutt/osm-lakelines/releases/download/v12/lake_centerline.shp.zip
+6c900507c88fc9f5b5a386f90fd0a42d0495e8755a03d075538fb9a6801a3192  cache/sources/lake_centerline.shp.zip
+# https://naciscdn.org/naturalearth/packages/natural_earth_vector.sqlite.zip
+375da61836d4779dffa8b87887bc4faa94dac77745ba0ee3914bd7cbedf40a02  cache/sources/natural_earth_vector.sqlite.zip
+# https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip
+05ba9c22b108adcae9724946f6da9b395119556c75cfac12cddc0f8079215435  cache/sources/water-polygons-split-3857.zip
+#
+# ---- Build output ----
+# planetiler 0.10.2, git 0e5588c4a6e8c29a270a33afe8df62027d889604, built 2026-03-28T14:40:55.764Z,
+# image ghcr.io/onthegomap/planetiler:0.10.2 @ sha256:cf32202dbc001a9ab4bc11534b642b13de3798179817da8558e567a3d13dd403,
+# default OpenMapTiles profile (schema 3.16.0), z0-z14, 942 tiles, 40,882,176 bytes.
+# This checksum is that of THIS build. planetiler writes its own build metadata (planetiler:version, githash,
+# buildtime) into the metadata table and does not promise a byte-stable sqlite file, so a rebuild from the same pins
+# is equivalent in content but not guaranteed byte-identical; the pins that matter are the extract, the planetiler
+# version and the source checksums above. For the record, a second run on the same machine from the cached sources
+# (2026-09-02, 43 s) reproduced this exact file: identical SHA-256, all 942 tile blobs identical.
+51c889e599974751955c03657b823f2db532448f0d13ca0f2a87121a95e8e6ad  cache/berlin.mbtiles
