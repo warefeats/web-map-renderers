@@ -1,0 +1,29 @@
+{
+  "name": "web-map-renderers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.0",
+  "scripts": {
+    "bench": "bun run src/run.ts",
+    "smoke": "bun run src/run.ts --smoke",
+    "probe": "bun run src/probe.ts",
+    "serve": "bun run src/server.ts",
+    "import": "bun run src/import.ts",
+    "check": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@mapbox/vector-tile": "2.0.4",
+    "@types/bun": "1.2.21",
+    "@types/pngjs": "6.0.5",
+    "mapbox-gl": "1.13.3",
+    "maplibre-gl-5": "npm:maplibre-gl@5.24.0",
+    "maplibre-gl-6": "npm:maplibre-gl@6.7.0",
+    "pbf": "4.0.1",
+    "pixelmatch": "7.1.0",
+    "playwright": "1.62.1",
+    "pngjs": "7.0.0",
+    "typescript": "5.9.2"
+  }
+}
