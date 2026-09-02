@@ -4,13 +4,13 @@
   "slug": "maplibre-gl-js-vs-mapbox-gl-js",
   "category": "Web maps",
   "title": "MapLibre GL JS vs Mapbox GL JS",
-  "deck": "The fork measured against the code it forked from. mapbox-gl 1.13.3, the last BSD-licensed Mapbox release, beside maplibre-gl 5.24.0 and 6.7.0, all three fed the same self-hosted Berlin tiles, style, sprites and glyphs in one pinned Chromium on one GPU: startup timeline, frame time cold and warm, memory.",
+  "deck": "The fork measured against the code it forked from. mapbox-gl 1.13.3, the last BSD-licensed Mapbox release, beside maplibre-gl 5.24.0 and 6.7.0, all three fed the same self-hosted Berlin tiles, style, sprites and glyphs in one pinned Chromium on one GPU: startup timeline, frame time cold and warm, memory. I've committed code to MapLibre. The runner's public; check my numbers.",
   "unit": "ms",
   "lowerIsBetter": true,
   "verdict": {
-    "winnerId": "",
-    "headline": "",
-    "summary": ""
+    "winnerId": "maplibre-gl-5",
+    "headline": "MapLibre GL JS 5 painted a warm frame in 3.1 ms to Mapbox GL JS 1.13's 6.5 ms and held 919 MB to its 1,448 MB after the same camera path; 1.13 drew its first complete frame in 193 ms to MapLibre's 335, starting six workers to MapLibre's one",
+    "summary": "Five years after the fork, the renderer is where MapLibre pulled ahead: with every tile resident and the camera moving every frame, both MapLibre builds paint a frame in about half the time of the code they forked, and MapLibre 5 holds a third less memory after the same path. Startup went the other way, and for a reason that is in the defaults rather than the engine: mapbox-gl 1.13 starts six Web Workers on this 16-thread machine and parses the initial tiles in parallel, while MapLibre restricted its default to one worker, so 1.13 reaches its first complete frame in 193 ms to MapLibre's 335 and 351 with fades off. The default-fade marks tell a different story only because 1.13 holds its idle event until its 300 ms label fade ends and MapLibre does not. The cold pan, which is fetch, parse, layout and paint per view, ordered the three the other way round from the warm paint: MapLibre 6 fastest at 592 ms per view, 1.13 at 631, MapLibre 5 at 700. MapLibre 6 costs about 9 percent more memory and 4 percent more per warm frame than MapLibre 5, and that is its new default of overscaling four zoom levels past the source's maxzoom, which also raises its tile requests per pass to 374 against MapLibre 5's 225. The scorecard below has the section means; the limitations say what these numbers do not mean."
   },
   "trademarks": [
     "Mapbox and Mapbox GL JS are trademarks of Mapbox, Inc. mapbox-gl 1.13.3 is used under its BSD-3-Clause license.",
@@ -24,9 +24,12 @@
     "The builds disagree about what load and idle mean. mapbox-gl 1.13 holds load until its tile fade and idle until its label fade have finished; the MapLibre builds fire idle within a few milliseconds of load. The default-fade marks are reported as each build fires them, and the section's headline uses load with fadeDuration 0, the one mark that means the same amount of work in every build.",
     "One style, OSM Bright, with no globe, terrain, hillshade or 3D buildings, so features one build has and another lacks are not exercised. The style names an icon per POI class and its sprite lacks some of them, so every build logs the same missing-image warnings and draws those labels without an icon.",
     "Frame time is unthrottled and headless: relative renderer cost per frame with the camera moving every frame, not what a 60 Hz screen shows a user. The warm traversal has every tile the cold pan loaded resident, but tiles only needed at intermediate camera states are still requested and abandoned as the camera moves on; those requests are counted beside the timings and are inside the frame time.",
+    "The GeoJSON test is sensitive to protocol details in a way the other tests are not: mapbox-gl 1.13's figure moved from 311 ms to 404 ms between two runs on the same day whose only difference was a two-second settle before startup, while both MapLibre figures stayed put. The published number is from the run with the settle; treat that test as indicative.",
     "Memory is renderer plus GPU process private bytes over a blank page, with each library's default tile cache; on an integrated GPU the GPU process figure is system memory. The JS heap metric covers the main thread only, because the browser build does not expose the API that includes workers, and tile data lives in the workers. A fresh headless browser in this non-interactive session occasionally dies at launch or under load, for any candidate; a dead browser was relaunched and the sample redone, and the relaunch counts are in the run file.",
     "mapbox-gl 1.13.3 renders through WebGL 1 and the MapLibre builds through WebGL 2, because that is what each artifact does; nothing was patched to equalize it.",
     "Fifteen timing passes and fifteen memory samples on one machine on one day, the timing and memory phases run as separate processes; every sample is in the run file."
   ],
-  "runs": []
+  "runs": [
+    "runs/2026-09-02-amd-radeon-graphics.json"
+  ]
 }
