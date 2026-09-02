@@ -31,6 +31,8 @@ export interface PassResult {
   pageErrors: string[];
   mapErrors: string[];
   consoleWarnings: number;
+  libraryVersion: string | null;
+  workerCount: number | null;
 }
 
 export interface MemorySample {
@@ -217,6 +219,8 @@ async function measurePass(
       pageErrors: [...ctx.pageErrors, ...ctx.consoleErrors],
       mapErrors,
       consoleWarnings: ctx.consoleWarnings,
+      libraryVersion: lib.libraryVersion,
+      workerCount: lib.workerCount,
     };
   } finally {
     await ctx.context.close();
@@ -375,7 +379,10 @@ async function main(): Promise<void> {
 
   for (const c of results.candidates) {
     const first = results.passes.find((p) => p.results[c.id])?.results[c.id];
-    if (first) c.libraryVersion = c.version;
+    if (first) {
+      c.libraryVersion = first.libraryVersion ?? c.version;
+      c.workerCount = first.workerCount;
+    }
   }
   server.stop();
   const finished = new Date();
@@ -407,7 +414,9 @@ async function main(): Promise<void> {
     console.log(`\nFAILURES (${results.failures.length}):`);
     for (const f of results.failures) console.log(`  ${f.candidate ?? "-"} pass ${f.pass ?? "-"} ${f.phase}: ${f.message}`);
   }
-  const invalid = !args.smoke && (!results.gate.ok || results.violations.length > 0 || results.failures.length > 0);
+  // A crashed memory sample is reported and costs that sample; a failed timing pass or gate or network violation costs the run.
+  const fatal = results.failures.filter((f) => f.phase !== "memory");
+  const invalid = !args.smoke && (!results.gate.ok || results.violations.length > 0 || fatal.length > 0);
   if (invalid) {
     console.log("\nRUN INVALID: gate, network block or a failure tripped; results.json written for inspection only.");
     process.exit(2);

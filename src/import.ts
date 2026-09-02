@@ -134,6 +134,8 @@ export function buildStartupSection(raw: RawResults): BenchmarkSection {
     metrics["bundle-gzip"] = { value: c.bytes.gzip, unit: "B", label: "JavaScript served, gzip -9" };
     metrics["bundle-brotli"] = { value: c.bytes.brotli, unit: "B", label: "JavaScript served, brotli 11" };
     metrics["tile-requests"] = { value: round(avg(perPass(raw, id, (r) => r.tileRequests)), 0), unit: "requests", label: "Tile requests per pass" };
+    const workers = perPass(raw, id, (r) => r.workerCount);
+    if (workers.length) metrics["workers"] = { value: workers[0]!, unit: "workers", label: "Web Workers the library started by default" };
     return base(id, perPass(raw, id, (r) => r.startup.firstIdleMs), metrics);
   });
   const tests: BenchmarkTest[] = marks.map((m) => ({

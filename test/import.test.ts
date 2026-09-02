@@ -16,6 +16,8 @@ function pass(idle: number, warm: number): PassResult {
     pageErrors: [],
     mapErrors: [],
     consoleWarnings: 0,
+    libraryVersion: null,
+    workerCount: 2,
   };
 }
 
