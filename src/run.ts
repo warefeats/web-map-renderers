@@ -159,6 +159,31 @@ function rotate<T>(items: T[], by: number): T[] {
 
 const log = (msg: string) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${msg}`);
 
+/** Every call into the browser gets a hard deadline: a frozen page must never hang the run. */
+async function deadline<T>(what: string, ms: number, work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what}: no answer from the browser after ${ms} ms`)), ms);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Close a context and its browser without letting a wedged browser hold the run; kill the process if it will not close. */
+async function closeQuietly(ctxContext: { close(): Promise<void> } | null, browser: Browser | null): Promise<void> {
+  if (ctxContext) await deadline("context.close", 15_000, ctxContext.close()).catch(() => undefined);
+  if (browser) {
+    await deadline("browser.close", 15_000, browser.close()).catch(() => {
+      try {
+        (browser as unknown as { process?: () => { kill(): void } | null }).process?.()?.kill();
+      } catch {}
+    });
+  }
+}
+
 async function measurePass(
   browser: Browser,
   server: BenchServer,
@@ -178,42 +203,42 @@ async function measurePass(
     server.resetCounters();
     await ctx.page.goto(`${server.origin}/?candidate=${id}`, { waitUntil: "load" });
     phase = "import";
-    const lib = (await ctx.page.evaluate((m) => (window as any).bench.loadLib(m), { id: meta.id, kind: meta.kind, js: meta.js, css: meta.css, global: meta.global ?? null })) as {
+    const lib = (await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate((m) => (window as any).bench.loadLib(m), { id: meta.id, kind: meta.kind, js: meta.js, css: meta.css, global: meta.global ?? null }))) as {
       importMs: number;
       libraryVersion: string | null;
       workerCount: number | null;
     };
     phase = "startup";
-    const startup = (await ctx.page.evaluate((cfg) => (window as any).bench.start(cfg), { state: START, options: MAP_OPTIONS, idleTimeoutMs: proto.idleTimeoutMs })) as StartupMarks;
+    const startup = (await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate((cfg) => (window as any).bench.start(cfg), { state: START, options: MAP_OPTIONS, idleTimeoutMs: proto.idleTimeoutMs }))) as StartupMarks;
     phase = "geojson";
-    const geojson = (await ctx.page.evaluate((cfg) => (window as any).bench.geojson(cfg.url, cfg.idleTimeoutMs), { url: "/fixtures/buildings-5k.geojson", idleTimeoutMs: proto.idleTimeoutMs })) as {
+    const geojson = (await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate((cfg) => (window as any).bench.geojson(cfg.url, cfg.idleTimeoutMs), { url: "/fixtures/buildings-5k.geojson", idleTimeoutMs: proto.idleTimeoutMs }))) as {
       ms: number;
       features: number;
     };
     if (gate.run) {
       phase = "gate";
       for (const vp of VIEWPOINTS) {
-        const counts = (await ctx.page.evaluate((cfg) => (window as any).bench.viewAndCount(cfg.state, cfg.idleTimeoutMs), { state: vp.state, idleTimeoutMs: proto.idleTimeoutMs })) as Counts;
+        const counts = (await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate((cfg) => (window as any).bench.viewAndCount(cfg.state, cfg.idleTimeoutMs), { state: vp.state, idleTimeoutMs: proto.idleTimeoutMs }))) as Counts;
         (gate.sink.viewpoints[vp.id] ??= {})[id] = counts;
         const png = await ctx.page.screenshot({ type: "png" });
         await Bun.write(join(gate.screenshotDir, `${vp.id}--${id}.png`), png);
       }
       // Back to the start before the camera path so every candidate begins the cold pan from the same state.
-      await ctx.page.evaluate((cfg) => (window as any).bench.viewAndCount(cfg.state, cfg.idleTimeoutMs), { state: START, idleTimeoutMs: proto.idleTimeoutMs });
+      await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate((cfg) => (window as any).bench.viewAndCount(cfg.state, cfg.idleTimeoutMs), { state: START, idleTimeoutMs: proto.idleTimeoutMs }));
     }
     phase = "cold-pan";
-    const coldViewsMs = (await ctx.page.evaluate((cfg) => (window as any).bench.traverseIdle(cfg.states, cfg.idleTimeoutMs), { states: coldStates, idleTimeoutMs: proto.idleTimeoutMs })) as number[];
+    const coldViewsMs = (await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate((cfg) => (window as any).bench.traverseIdle(cfg.states, cfg.idleTimeoutMs), { states: coldStates, idleTimeoutMs: proto.idleTimeoutMs }))) as number[];
     // Prime: one unmeasured render-advanced traversal of the warm steps picks up any tile the cold pan left out, then the
     // map settles. The measured traversal follows, with the tile requests it caused recorded beside its timings.
     phase = "prime";
-    await ctx.page.evaluate((cfg) => (window as any).bench.traverseRender(cfg.states, cfg.idleTimeoutMs), { states: warmStates, idleTimeoutMs: proto.idleTimeoutMs });
-    await ctx.page.evaluate((ms) => (window as any).bench.settle(ms), proto.idleTimeoutMs);
+    await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate((cfg) => (window as any).bench.traverseRender(cfg.states, cfg.idleTimeoutMs), { states: warmStates, idleTimeoutMs: proto.idleTimeoutMs }));
+    await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate((ms) => (window as any).bench.settle(ms), proto.idleTimeoutMs));
     const before = { tiles: server.counters.tiles, tilesMissing: server.counters.tilesMissing, tileBytes: server.counters.tileBytes };
     server.resetCounters();
     phase = "warm-paint";
-    const warmStepsMs = (await ctx.page.evaluate((cfg) => (window as any).bench.traverseRender(cfg.states, cfg.idleTimeoutMs), { states: warmStates, idleTimeoutMs: proto.idleTimeoutMs })) as number[];
+    const warmStepsMs = (await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate((cfg) => (window as any).bench.traverseRender(cfg.states, cfg.idleTimeoutMs), { states: warmStates, idleTimeoutMs: proto.idleTimeoutMs }))) as number[];
     const warmTileRequests = server.counters.tiles;
-    const mapErrors = (await ctx.page.evaluate(() => (window as any).bench.errors.slice())) as string[];
+    const mapErrors = (await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate(() => (window as any).bench.errors.slice()))) as string[];
     violations.push(...ctx.violations);
     const c = { tiles: before.tiles + server.counters.tiles, tilesMissing: before.tilesMissing + server.counters.tilesMissing, tileBytes: before.tileBytes + server.counters.tileBytes, glyphs: server.counters.glyphs };
     return {
@@ -234,13 +259,14 @@ async function measurePass(
       workerCount: lib.workerCount,
     };
   } finally {
-    await ctx.context.close();
+    await closeQuietly(ctx.context, null);
   }
 }
 
 async function measureMemory(server: BenchServer, id: CandidateId | null, proto: Protocol, coldStates: CameraState[], args: string[]): Promise<{ bytes: ProcessBytes; afterPath?: ProcessBytes; heapIdle: number | null; heapPath: number | null; heapScope: string | null }> {
-  const browser = await launch(args);
-  const ctx = await newBenchContext(browser, server.origin, id ?? "baseline", () => "memory");
+  const browser = await deadline("launch", 60_000, launch(args));
+  const phase = "memory";
+  const ctx = await newBenchContext(browser, server.origin, id ?? "baseline", () => phase);
   try {
     const cdp = await ctx.context.newCDPSession(ctx.page);
     const gc = () => cdp.send("HeapProfiler.collectGarbage").catch(() => undefined);
@@ -252,21 +278,20 @@ async function measureMemory(server: BenchServer, id: CandidateId | null, proto:
     }
     const meta = CANDIDATES[id];
     await ctx.page.goto(`${server.origin}/?candidate=${id}`, { waitUntil: "load" });
-    await ctx.page.evaluate((m) => (window as any).bench.loadLib(m), { id: meta.id, kind: meta.kind, js: meta.js, css: meta.css, global: meta.global ?? null });
-    await ctx.page.evaluate((cfg) => (window as any).bench.start(cfg), { state: START, options: MEMORY_MAP_OPTIONS, idleTimeoutMs: proto.idleTimeoutMs });
+    await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate((m) => (window as any).bench.loadLib(m), { id: meta.id, kind: meta.kind, js: meta.js, css: meta.css, global: meta.global ?? null }));
+    await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate((cfg) => (window as any).bench.start(cfg), { state: START, options: MEMORY_MAP_OPTIONS, idleTimeoutMs: proto.idleTimeoutMs }));
     await ctx.page.waitForTimeout(1000);
     await gc();
-    const heapIdle = (await ctx.page.evaluate(() => (window as any).bench.jsHeap())) as { bytes: number; scope: string } | null;
+    const heapIdle = (await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate(() => (window as any).bench.jsHeap()))) as { bytes: number; scope: string } | null;
     const bytes = await processBytes(browser);
-    await ctx.page.evaluate((cfg) => (window as any).bench.traverseIdle(cfg.states, cfg.idleTimeoutMs), { states: coldStates, idleTimeoutMs: proto.idleTimeoutMs });
+    await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate((cfg) => (window as any).bench.traverseIdle(cfg.states, cfg.idleTimeoutMs), { states: coldStates, idleTimeoutMs: proto.idleTimeoutMs }));
     await ctx.page.waitForTimeout(1000);
     await gc();
-    const heapPath = (await ctx.page.evaluate(() => (window as any).bench.jsHeap())) as { bytes: number; scope: string } | null;
+    const heapPath = (await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate(() => (window as any).bench.jsHeap()))) as { bytes: number; scope: string } | null;
     const afterPath = await processBytes(browser);
     return { bytes, afterPath, heapIdle: heapIdle?.bytes ?? null, heapPath: heapPath?.bytes ?? null, heapScope: heapIdle?.scope ?? heapPath?.scope ?? null };
   } finally {
-    await ctx.context.close();
-    await browser.close();
+    await closeQuietly(ctx.context, browser);
   }
 }
 
@@ -353,8 +378,9 @@ async function main(): Promise<void> {
       }
     }
     results.passes.push(pass);
+    await Bun.write(join(root, args.output), JSON.stringify(results, null, 2) + "\n");
   }
-  await browser.close();
+  await closeQuietly(null, browser);
 
   // Parity gate: every candidate against the reference at every viewpoint, plus the pixel diff as information.
   const refId = REFERENCE;
@@ -401,6 +427,7 @@ async function main(): Promise<void> {
         results.failures.push({ candidate: null, pass: s, phase: "memory", message });
         log(`memory sample ${s}: FAILED ${message.split("\n")[0]}`);
       }
+      await Bun.write(join(root, args.output), JSON.stringify(results, null, 2) + "\n");
     }
   }
 
