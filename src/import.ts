@@ -236,6 +236,7 @@ export function buildFrameTimeSection(raw: RawResults): BenchmarkSection {
 export function buildMemorySection(raw: RawResults): BenchmarkSection {
   const ids = candidateIds(raw).filter((id) => (raw.memory[id]?.length ?? 0) > 0);
   const delta = (id: CandidateId, pick: "afterIdle" | "afterPath") => (raw.memory[id] ?? []).map((m) => round(m[pick].renderer + m[pick].gpu - (m.baseline.renderer + m.baseline.gpu), 2));
+  const heapScope = (id: CandidateId) => ((raw.memory[id] ?? []).find((m) => m.jsHeapScope)?.jsHeapScope === "agent" ? "main thread and workers" : "main thread only; tile data lives in workers");
   const heap = (id: CandidateId, pick: "jsHeapAfterIdleBytes" | "jsHeapAfterPathBytes") => (raw.memory[id] ?? []).map((m) => m[pick]).filter((v): v is number => v !== null).map((v) => v / 1024 / 1024);
   const candidates = ids.map((id) =>
     base(id, delta(id, "afterPath"), {
@@ -243,8 +244,8 @@ export function buildMemorySection(raw: RawResults): BenchmarkSection {
       "after-path-mean": { value: round(avg(delta(id, "afterPath")), 1), unit: "MB", label: "Renderer + GPU process over baseline after the camera path, mean" },
       "renderer-after-path": { value: round(avg((raw.memory[id] ?? []).map((m) => m.afterPath.renderer - m.baseline.renderer)), 1), unit: "MB", label: "Renderer process over baseline after the camera path" },
       "gpu-after-path": { value: round(avg((raw.memory[id] ?? []).map((m) => m.afterPath.gpu - m.baseline.gpu)), 1), unit: "MB", label: "GPU process over baseline after the camera path" },
-      "js-heap-after-idle": { value: round(avg(heap(id, "jsHeapAfterIdleBytes")), 1), unit: "MB", label: "JS heap including workers after first idle" },
-      "js-heap-after-path": { value: round(avg(heap(id, "jsHeapAfterPathBytes")), 1), unit: "MB", label: "JS heap including workers after the camera path" },
+      "js-heap-after-idle": { value: round(avg(heap(id, "jsHeapAfterIdleBytes")), 1), unit: "MB", label: `JS heap (${heapScope(id)}) after first idle` },
+      "js-heap-after-path": { value: round(avg(heap(id, "jsHeapAfterPathBytes")), 1), unit: "MB", label: `JS heap (${heapScope(id)}) after the camera path` },
       "memory-samples": { value: (raw.memory[id] ?? []).length, unit: "samples", label: "Memory samples measured" },
       "browser-relaunches": { value: (raw.browserRelaunches ?? []).filter((r) => r.candidate === id).length, unit: "relaunches", label: "Fresh browsers that died and were relaunched during memory sampling" },
     }),
