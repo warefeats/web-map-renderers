@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildRun, type RunMetadata } from "../src/import";
+import { buildRun, checkFleetRun, lineupOf, runMetadata, versionOf, type RunMetadata } from "../src/import";
 import type { PassResult, RawResults } from "../src/run";
 
 function pass(idle: number, warm: number): PassResult {
@@ -106,5 +106,54 @@ describe("import", () => {
   test("samples are independently measured, never replicated", () => {
     const run = buildRun(raw, meta);
     for (const s of run.sections) for (const c of s.candidates) expect(new Set(c.samplesMs).size).toBeGreaterThan(1);
+  });
+});
+
+describe("fleet runs", () => {
+  const versioned: RawResults = {
+    ...raw,
+    candidates: raw.candidates.map((c) => ({ ...c, version: c.id === "maplibre-gl-6" ? "6.13.0" : c.id === "maplibre-gl-5" ? "5.24.0" : "1.13.3", libraryVersion: null })),
+  };
+  const lock = [
+    '    "mapbox-gl": ["mapbox-gl@1.13.3", "", { "dependencies": { "pbf": "^3.2.1" } }, "sha512-AAA="],',
+    '    "maplibre-gl-5": ["maplibre-gl@5.24.0", "", { "dependencies": {} }, "sha512-BBB="],',
+    '    "maplibre-gl-6": ["maplibre-gl@6.13.0", "", { "dependencies": {} }, "sha512-CCC="],',
+  ].join("\n");
+
+  test("versions come from the run, so a bump needs no matrix edit", () => {
+    expect(versionOf(versioned, "maplibre-gl-6")).toBe("6.13.0");
+    const reported = { ...versioned, candidates: versioned.candidates.map((c) => ({ ...c, libraryVersion: c.version })) };
+    expect(buildRun(reported, meta).sections[0]!.candidates.find((c) => c.id === "maplibre-gl-6")!.version).toBe("6.13.0");
+  });
+
+  test("the label carries the date, the GPU keeps the recorded driver, and a smoke run says so in its id", () => {
+    const m = runMetadata(versioned, { fleet: true, rig: "radeon-680m-win11", gpuShort: "Radeon 680M", osShort: "Windows 11", gpuName: "AMD Radeon 680M" });
+    expect(m.id).toBe("2026-09-03-radeon-680m-win11");
+    expect(m.label).toBe("Radeon 680M / Windows 11, 2026-09-03");
+    expect(m.environment.gpu).toBe("AMD Radeon 680M, driver 1");
+    expect(runMetadata({ ...versioned, smoke: true }, { fleet: true, rig: "r" }).id).toBe("2026-09-03-r-smoke");
+    expect(runMetadata(versioned, { rig: "r" }).label).toBe("AMD Radeon(TM) Graphics / Windows 11 Pro 24H2 (local)");
+  });
+
+  test("the lineup pins each candidate's package and integrity from bun.lock", () => {
+    expect(lineupOf(versioned, lock)).toEqual([
+      { candidateId: "mapbox-gl-1-13", package: "mapbox-gl", version: "1.13.3", integrity: "sha512-AAA=" },
+      { candidateId: "maplibre-gl-5", package: "maplibre-gl", version: "5.24.0", integrity: "sha512-BBB=" },
+      { candidateId: "maplibre-gl-6", package: "maplibre-gl", version: "6.13.0", integrity: "sha512-CCC=" },
+    ]);
+    expect(() => lineupOf(versioned, lock.replace("6.13.0", "6.12.0"))).toThrow("bun.lock pins 6.12.0");
+  });
+
+  test("refuses smoke runs, failed gates, failed passes, a missing commit and a version mismatch", () => {
+    const commit = "a".repeat(40);
+    expect(() => checkFleetRun(versioned, { allowSmoke: false, commit })).not.toThrow();
+    expect(() => checkFleetRun({ ...versioned, smoke: true }, { allowSmoke: false, commit })).toThrow("smoke");
+    expect(() => checkFleetRun({ ...versioned, smoke: true }, { allowSmoke: true, commit })).not.toThrow();
+    expect(() => checkFleetRun({ ...versioned, gate: { ...versioned.gate, ok: false } }, { allowSmoke: false, commit })).toThrow("parity gate");
+    expect(() => checkFleetRun({ ...versioned, failures: [{ candidate: "maplibre-gl-6", pass: 1, phase: "pass", message: "x" }] }, { allowSmoke: false, commit })).toThrow("failed pass");
+    expect(() => checkFleetRun({ ...versioned, failures: [{ candidate: null, pass: 0, phase: "memory", message: "x" }] }, { allowSmoke: false, commit })).not.toThrow();
+    expect(() => checkFleetRun(versioned, { allowSmoke: false })).toThrow("--commit");
+    const mismatch = { ...versioned, candidates: versioned.candidates.map((c) => ({ ...c, libraryVersion: c.id === "maplibre-gl-6" ? "6.12.0" : null })) };
+    expect(() => checkFleetRun(mismatch, { allowSmoke: false, commit })).toThrow("reported 6.12.0");
   });
 });

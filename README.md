@@ -16,7 +16,7 @@ Mapbox GL JS v2 and later are licensed only to holders of a Mapbox account under
 | MapLibre GL JS 5 | 5.24.0 | `dist/maplibre-gl.js` (UMD, worker embedded) | WebGL 2, WebGL 1 fallback | BSD-3-Clause |
 | MapLibre GL JS 6 | 6.7.0 | `dist/maplibre-gl.mjs` + `maplibre-gl-shared.mjs` + `maplibre-gl-worker.mjs` (ESM) | WebGL 2 | BSD-3-Clause |
 
-The exact files come from the npm tarballs pinned in `package.json` and `bun.lock` (`maplibre-gl-5` and `maplibre-gl-6` are npm aliases for the two maplibre-gl versions) and are served from `node_modules` by the harness. Nothing is patched.
+The exact files come from the npm tarballs pinned in `package.json` and `bun.lock` (`maplibre-gl-5` and `maplibre-gl-6` are npm aliases for the two maplibre-gl versions) and are served from `node_modules` by the harness. Nothing is patched. The versions are the ones the published run measured; fleet runs (below) record their own.
 
 ## What is measured
 
@@ -58,3 +58,7 @@ The published run comes from a Windows 11 mini PC with an AMD Ryzen 7 6800H and 
 ## Publishing
 
 `just import` turns `results.json` into `runs/<date>-<rig>.json` and registers it in `benchmark.json`; the verdict and limitations in `benchmark.json` are written by hand from the run. The site pins this repository by commit in its registry and renders whatever the run file says.
+
+## Fleet runs
+
+Each candidate is a release line. `maplibre-gl-6` follows MapLibre 6, `maplibre-gl-5` stays on 5.x, whose last release it already is, and `mapbox-gl` stays at 1.13.3 for the reason above. Renovate moves a line to its newest stable release once that release is a week old and merges the bump when CI passes (`renovate.json`); a new major waits on its dependency dashboard and becomes a new alias by hand. A bump measures nothing. The warefeats fleet measures `main` on the rig when a run is dispatched, imports it with `--fleet`, which records the commit, the rig and each package's integrity hash from `bun.lock` and leaves `runs` alone, and opens a PR that lists the run in `fleetRuns`. Fleet runs appear on the site's matchup, never on the post, whose verdict was written from its own run.

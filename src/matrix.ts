@@ -1,9 +1,13 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 export type CandidateId = "mapbox-gl-1-13" | "maplibre-gl-5" | "maplibre-gl-6";
 
 export interface CandidateMeta {
   id: CandidateId;
   /** Display name; carries the major version so verdict headlines can tell the two MapLibre builds apart. */
   name: string;
+  /** The version installed under node_modules/<pkg>, so a bump in package.json needs no edit here. */
   version: string;
   /** Directory under node_modules whose dist/ the server exposes at /vendor/<id>/. */
   pkg: string;
@@ -20,11 +24,19 @@ export interface CandidateMeta {
   webgl: string;
 }
 
+function installed(pkg: string): string {
+  try {
+    return (JSON.parse(readFileSync(join(import.meta.dirname!, "..", "node_modules", pkg, "package.json"), "utf8")) as { version: string }).version;
+  } catch {
+    return "not installed";
+  }
+}
+
 export const CANDIDATES: Record<CandidateId, CandidateMeta> = {
   "mapbox-gl-1-13": {
     id: "mapbox-gl-1-13",
     name: "Mapbox GL JS 1.13",
-    version: "1.13.3",
+    version: installed("mapbox-gl"),
     pkg: "mapbox-gl",
     kind: "umd",
     js: "mapbox-gl.js",
@@ -39,7 +51,7 @@ export const CANDIDATES: Record<CandidateId, CandidateMeta> = {
   "maplibre-gl-5": {
     id: "maplibre-gl-5",
     name: "MapLibre GL JS 5",
-    version: "5.24.0",
+    version: installed("maplibre-gl-5"),
     pkg: "maplibre-gl-5",
     kind: "umd",
     js: "maplibre-gl.js",
@@ -54,7 +66,7 @@ export const CANDIDATES: Record<CandidateId, CandidateMeta> = {
   "maplibre-gl-6": {
     id: "maplibre-gl-6",
     name: "MapLibre GL JS 6",
-    version: "6.7.0",
+    version: installed("maplibre-gl-6"),
     pkg: "maplibre-gl-6",
     kind: "esm",
     js: "maplibre-gl.mjs",

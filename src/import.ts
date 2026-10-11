@@ -58,6 +58,20 @@ export interface BenchmarkSection {
   tests: BenchmarkTest[];
 }
 
+/** What a fleet run measured: the runner commit, the rig, and each candidate's package as the lockfile pinned it. */
+export interface Provenance {
+  kind: "fleet";
+  commit: string;
+  rig: string;
+}
+
+export interface LineupEntry {
+  candidateId: string;
+  package: string;
+  version: string;
+  integrity: string;
+}
+
 export interface RunFile {
   schemaVersion: 1;
   id: string;
@@ -67,6 +81,8 @@ export interface RunFile {
   protocol: RunMetadata["protocol"];
   candidates: [];
   sections: BenchmarkSection[];
+  provenance?: Provenance;
+  lineup?: LineupEntry[];
 }
 
 export function validateResults(raw: unknown): RawResults {
@@ -108,9 +124,15 @@ export function perPass(raw: RawResults, id: CandidateId, pick: (r: PassResult) 
 
 const avg = (xs: number[]) => (xs.length ? mean(xs) : Number.NaN);
 
-function base(id: CandidateId, samples: number[], metrics: Record<string, Metric>): Candidate {
+/** The version the run measured: what the library reported at run time, else what was installed when it ran. */
+export function versionOf(raw: RawResults, id: CandidateId): string {
+  const c = raw.candidates.find((x) => x.id === id);
+  return c?.libraryVersion ?? c?.version ?? CANDIDATES[id].version;
+}
+
+function base(raw: RawResults, id: CandidateId, samples: number[], metrics: Record<string, Metric>): Candidate {
   const meta = CANDIDATES[id];
-  return { id, name: meta.name, version: meta.version, color: meta.color, homepage: meta.homepage, statistics: statistics(samples), samplesMs: samples, metrics };
+  return { id, name: meta.name, version: versionOf(raw, id), color: meta.color, homepage: meta.homepage, statistics: statistics(samples), samplesMs: samples, metrics };
 }
 
 function fmtMs(ms: number): string {
@@ -149,7 +171,7 @@ export function buildStartupSection(raw: RawResults): BenchmarkSection {
     metrics["tile-requests"] = { value: round(avg(perPass(raw, id, (r) => r.tileRequests)), 0), unit: "requests", label: "Tile requests per pass" };
     const workers = perPass(raw, id, (r) => r.workerCount);
     if (workers.length) metrics["workers"] = { value: workers[0]!, unit: "workers", label: "Web Workers the library started by default" };
-    return base(id, noFade(id, "loadMs"), metrics);
+    return base(raw, id, noFade(id, "loadMs"), metrics);
   });
   const tests: BenchmarkTest[] = [
     {
@@ -199,7 +221,7 @@ export function buildFrameTimeSection(raw: RawResults): BenchmarkSection {
   const allViews = (id: CandidateId) => raw.passes.filter((p) => !p.warmup).flatMap((p) => p.results[id]?.coldViewsMs ?? []);
   const allSteps = (id: CandidateId) => raw.passes.filter((p) => !p.warmup).flatMap((p) => p.results[id]?.warmStepsMs ?? []);
   const candidates = ids.map((id) =>
-    base(id, perPass(raw, id, (r) => avg(r.warmStepsMs)), {
+    base(raw, id, perPass(raw, id, (r) => avg(r.warmStepsMs)), {
       "cold-view-mean": { value: round(avg(allViews(id)), 1), unit: "ms", label: "Cold pan, mean per view" },
       "cold-view-p99": { value: round(percentile(allViews(id), 0.99), 1), unit: "ms", label: "Cold pan, p99 view" },
       "warm-frame-mean": { value: round(avg(allSteps(id)), 2), unit: "ms", label: "Warm paint, mean per frame" },
@@ -249,7 +271,7 @@ export function buildMemorySection(raw: RawResults): BenchmarkSection {
   const heapScope = (id: CandidateId) => ((raw.memory[id] ?? []).find((m) => m.jsHeapScope)?.jsHeapScope === "agent" ? "main thread and workers" : "main thread only; tile data lives in workers");
   const heap = (id: CandidateId, pick: "jsHeapAfterIdleBytes" | "jsHeapAfterPathBytes") => (raw.memory[id] ?? []).map((m) => m[pick]).filter((v): v is number => v !== null).map((v) => v / 1024 / 1024);
   const candidates = ids.map((id) =>
-    base(id, delta(id, "afterPath"), {
+    base(raw, id, delta(id, "afterPath"), {
       "after-idle-mean": { value: round(avg(delta(id, "afterIdle")), 1), unit: "MB", label: "Renderer + GPU process over baseline after first idle, mean" },
       "after-path-mean": { value: round(avg(delta(id, "afterPath")), 1), unit: "MB", label: "Renderer + GPU process over baseline after the camera path, mean" },
       "renderer-after-path": { value: round(avg((raw.memory[id] ?? []).map((m) => m.afterPath.renderer - m.baseline.renderer)), 1), unit: "MB", label: "Renderer process over baseline after the camera path" },
@@ -310,10 +332,89 @@ export function slug(text: string): string {
     .replace(/^-|-$/g, "");
 }
 
+export interface ImportOptions {
+  /** Rig id in the run id, e.g. radeon-680m-win11; defaults to the GPU's short name as a slug. */
+  rig?: string;
+  label?: string;
+  machine?: string;
+  gpu?: string;
+  /** The GPU's name for readers; the driver the run recorded is appended. Ignored when gpu is given. */
+  gpuName?: string;
+  gpuShort?: string;
+  osShort?: string;
+  /** A fleet run: label carries the date instead of "(local)", and a smoke run's id says so. */
+  fleet?: boolean;
+}
+
+function gpuShortOf(raw: RawResults, opts: ImportOptions): string {
+  return opts.gpuShort ?? raw.rig.gpu.split(",")[0]!.trim();
+}
+
+export function rigSlugOf(raw: RawResults, opts: ImportOptions): string {
+  return opts.rig ?? slug(gpuShortOf(raw, opts));
+}
+
+export function runMetadata(raw: RawResults, opts: ImportOptions): RunMetadata {
+  const publishedAt = raw.generatedAt.split("T")[0]!;
+  const gpuShort = gpuShortOf(raw, opts);
+  const osShort = opts.osShort ?? raw.rig.os.split(" (")[0]!.trim();
+  const rigSlug = rigSlugOf(raw, opts);
+  const driver = raw.rig.gpu.indexOf(", driver");
+  const gpu = opts.gpu ?? (opts.gpuName && driver >= 0 ? `${opts.gpuName}${raw.rig.gpu.slice(driver)}` : raw.rig.gpu);
+  return {
+    id: `${publishedAt}-${rigSlug}${opts.fleet && raw.smoke ? "-smoke" : ""}`,
+    label: opts.label ?? (opts.fleet ? `${gpuShort} / ${osShort}, ${publishedAt}` : `${gpuShort} / ${osShort} (local)`),
+    publishedAt,
+    environment: {
+      machine: opts.machine ?? raw.rig.machine,
+      chip: raw.rig.chip,
+      cores: raw.rig.cores,
+      memory: raw.rig.memory,
+      os: raw.rig.os,
+      arch: raw.rig.arch,
+      runtime: `Playwright ${raw.browser.playwright} Chromium ${raw.browser.chromium} headless shell; Bun ${raw.harness.bun} harness and loopback static server`,
+      gpu,
+      browser: `Chromium ${raw.browser.chromium}, ${raw.browser.webgl2 ?? raw.browser.webgl1 ?? "unknown renderer"}; flags ${raw.browser.args.filter((a) => !a.startsWith("--host-resolver")).join(" ")}`,
+      display: `${raw.protocol.viewport.width}x${raw.protocol.viewport.height} at ${raw.protocol.viewport.deviceScaleFactor}x, offscreen; ${raw.rig.display}`,
+    },
+    protocol: {
+      warmups: raw.protocol.warmups,
+      runs: raw.protocol.passes,
+      processModel: `One Chromium process for startup and frame time, fresh browser context per pass, candidates interleaved and rotated each pass; ${raw.protocol.memorySamples} memory samples with a fresh browser process each; every request outside loopback fails at the resolver and any attempt invalidates the run`,
+      cacheState: `Fresh context per pass, no HTTP cache; timing passes run with maxTileCacheSize ${raw.protocol.mapOptions.maxTileCacheSize} so the warm traversal is warm, memory samples with each library's default tile cache; tiles served gzip from one MBTiles by the harness`,
+      output: "The map's own events timed with performance.now() under cross-origin isolation; Playwright screenshots and queryRenderedFeatures for the parity gate; process memory from the OS",
+    },
+  };
+}
+
+/** Each candidate's package, version and integrity hash as bun.lock pinned them for this run. */
+export function lineupOf(raw: RawResults, lock: string): LineupEntry[] {
+  return candidateIds(raw).map((id) => {
+    const key = CANDIDATES[id].pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const m = new RegExp(`^\\s*"${key}": \\["(.+)@([^"@]+)", "[^"]*", .*"(sha512-[A-Za-z0-9+/=]+)"\\],?$`, "m").exec(lock);
+    if (!m) throw new Error(`bun.lock has no entry for ${CANDIDATES[id].pkg}`);
+    const version = versionOf(raw, id);
+    if (m[2] !== version) throw new Error(`${id}: bun.lock pins ${m[2]} but the run measured ${version}`);
+    return { candidateId: id, package: m[1]!, version, integrity: m[3]! };
+  });
+}
+
+/** Refusals for a fleet run: nothing smoke-tested, gated out or mislabelled reaches a PR. */
+export function checkFleetRun(raw: RawResults, opts: { allowSmoke: boolean; commit?: string }): void {
+  if (raw.smoke && !opts.allowSmoke) throw new Error("a fleet run can't be a smoke run (pass --allow-smoke to check the pipeline)");
+  if (!raw.gate.ok) throw new Error("the parity gate did not pass");
+  if (raw.failures.some((f) => f.phase !== "memory") || raw.violations.length > 0) throw new Error("the run recorded a failed pass or a network violation");
+  if (!opts.commit || !/^[0-9a-f]{40}$/.test(opts.commit)) throw new Error("--fleet needs --commit=<the runner commit's full SHA>");
+  for (const c of raw.candidates) {
+    if (c.libraryVersion && c.libraryVersion !== c.version) throw new Error(`${c.id} reported ${c.libraryVersion} at run time but ${c.version} was installed`);
+  }
+}
+
 if (import.meta.main) {
   const root = join(import.meta.dirname!, "..");
   const argv = process.argv.slice(2);
   const flag = (name: string) => argv.find((a) => a.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
+  const fleet = argv.includes("--fleet");
   const resultsPath = flag("results") ? resolve(flag("results")!) : join(root, "results.json");
   const raw = validateResults(await Bun.file(resultsPath).json());
   // --memory-results=<file>: take the memory samples (and their relaunch count) from a separate run of the memory
@@ -330,46 +431,38 @@ if (import.meta.main) {
   }
   if (raw.smoke) console.warn("warning: importing a SMOKE run");
   if (!raw.gate.ok) console.warn("warning: the parity gate did not pass; this run is not publishable");
-  const publishedAt = raw.generatedAt.split("T")[0]!;
-  const gpuShort = flag("gpu-short") ?? raw.rig.gpu.split(",")[0]!.trim();
-  const osShort = flag("os-short") ?? raw.rig.os.split(" (")[0]!.trim();
-  const rigSlug = flag("rig") ?? slug(gpuShort);
-  const meta: RunMetadata = {
-    id: `${publishedAt}-${rigSlug}`,
-    label: flag("label") ?? `${gpuShort} / ${osShort} (local)`,
-    publishedAt,
-    environment: {
-      machine: flag("machine") ?? raw.rig.machine,
-      chip: raw.rig.chip,
-      cores: raw.rig.cores,
-      memory: raw.rig.memory,
-      os: raw.rig.os,
-      arch: raw.rig.arch,
-      runtime: `Playwright ${raw.browser.playwright} Chromium ${raw.browser.chromium} headless shell; Bun ${raw.harness.bun} harness and loopback static server`,
-      gpu: flag("gpu") ?? raw.rig.gpu,
-      browser: `Chromium ${raw.browser.chromium}, ${raw.browser.webgl2 ?? raw.browser.webgl1 ?? "unknown renderer"}; flags ${raw.browser.args.filter((a) => !a.startsWith("--host-resolver")).join(" ")}`,
-      display: `${raw.protocol.viewport.width}x${raw.protocol.viewport.height} at ${raw.protocol.viewport.deviceScaleFactor}x, offscreen; ${raw.rig.display}`,
-    },
-    protocol: {
-      warmups: raw.protocol.warmups,
-      runs: raw.protocol.passes,
-      processModel: `One Chromium process for startup and frame time, fresh browser context per pass, candidates interleaved and rotated each pass; ${raw.protocol.memorySamples} memory samples with a fresh browser process each; every request outside loopback fails at the resolver and any attempt invalidates the run`,
-      cacheState: `Fresh context per pass, no HTTP cache; timing passes run with maxTileCacheSize ${raw.protocol.mapOptions.maxTileCacheSize} so the warm traversal is warm, memory samples with each library's default tile cache; tiles served gzip from one MBTiles by the harness`,
-      output: "The map's own events timed with performance.now() under cross-origin isolation; Playwright screenshots and queryRenderedFeatures for the parity gate; process memory from the OS",
-    },
+  if (fleet) checkFleetRun(raw, { allowSmoke: argv.includes("--allow-smoke"), commit: flag("commit") });
+  const opts: ImportOptions = {
+    rig: flag("rig"),
+    label: flag("label"),
+    machine: flag("machine"),
+    gpu: flag("gpu"),
+    gpuName: flag("gpu-name"),
+    gpuShort: flag("gpu-short"),
+    osShort: flag("os-short"),
+    fleet,
   };
+  const meta = runMetadata(raw, opts);
   const run = buildRun(raw, meta);
   const runPath = `runs/${run.id}.json`;
-  await Bun.write(join(root, runPath), JSON.stringify(run, null, 2) + "\n");
-  const benchmarkPath = join(root, "benchmark.json");
-  if (!existsSync(benchmarkPath)) throw new Error(`benchmark.json not found at ${benchmarkPath}`);
-  const benchmark = (await Bun.file(benchmarkPath).json()) as { runs?: string[] };
-  const runs = benchmark.runs ?? [];
-  if (!runs.includes(runPath)) {
-    runs.push(runPath);
-    benchmark.runs = runs;
-    await Bun.write(benchmarkPath, JSON.stringify(benchmark, null, 2) + "\n");
+  if (fleet) {
+    // A fleet run is written but not listed: the fleet's publish job adds it to benchmark.json's fleetRuns on the PR.
+    run.provenance = { kind: "fleet", commit: flag("commit")!, rig: rigSlugOf(raw, opts) };
+    run.lineup = lineupOf(raw, await Bun.file(join(root, "bun.lock")).text());
+    await Bun.write(join(root, runPath), JSON.stringify(run, null, 2) + "\n");
+    console.log(`fleet-run: ${runPath}`);
+  } else {
+    await Bun.write(join(root, runPath), JSON.stringify(run, null, 2) + "\n");
+    const benchmarkPath = join(root, "benchmark.json");
+    if (!existsSync(benchmarkPath)) throw new Error(`benchmark.json not found at ${benchmarkPath}`);
+    const benchmark = (await Bun.file(benchmarkPath).json()) as { runs?: string[] };
+    const runs = benchmark.runs ?? [];
+    if (!runs.includes(runPath)) {
+      runs.push(runPath);
+      benchmark.runs = runs;
+      await Bun.write(benchmarkPath, JSON.stringify(benchmark, null, 2) + "\n");
+    }
+    console.log(`wrote ${runPath}`);
   }
-  console.log(`wrote ${runPath}`);
   for (const section of run.sections) console.log(`  ${section.id}: ${section.candidates.length} candidates, ${section.tests.length} tests, winner ${section.verdict.winnerId}`);
 }
