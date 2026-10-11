@@ -1,0 +1,39 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "enabledManagers": ["bun"],
+  "dependencyDashboard": true,
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+  "packageRules": [
+    {
+      "description": "Harness: everything that isn't a candidate, in one PR a month, merged by hand. A new Playwright brings a new Chromium and a new Bun a new harness, so each of these changes the rig.",
+      "matchDepNames": ["!mapbox-gl", "!maplibre-gl-5", "!maplibre-gl-6"],
+      "groupName": "harness",
+      "schedule": ["* 0-3 1 * *"],
+      "automerge": false
+    },
+    {
+      "description": "Candidates: a release line moves to its newest stable release once that release is 7 days old, and the PR merges itself when CI passes. Nothing is measured until a fleet run is dispatched.",
+      "matchDepNames": ["maplibre-gl-5", "maplibre-gl-6"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
+    },
+    {
+      "description": "MapLibre 5 is a closed line: it never leaves 5.x.",
+      "matchDepNames": ["maplibre-gl-5"],
+      "allowedVersions": "<6"
+    },
+    {
+      "description": "A new MapLibre major is a new release line, added by hand as a new alias. The dashboard lists it. Approving it there would move the maplibre-gl-6 line to the new major, so don't.",
+      "matchDepNames": ["maplibre-gl-6"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "mapbox-gl stays at 1.13.3: Mapbox's terms forbid benchmarking later releases against a substitute (docs/adr/0001).",
+      "matchDepNames": ["mapbox-gl"],
+      "enabled": false
+    }
+  ]
+}
