@@ -6,7 +6,7 @@ import { assertGpu, chromiumArgs, gpuInfo, launch, newBenchContext, type GpuInfo
 import { START, VIEWPOINTS, cameraPath, type CameraState } from "./camera";
 import { compareCounts, pixelDiff, type CountViolation, type Counts } from "./gate";
 import { CANDIDATES, CANDIDATE_ORDER, GATE, MAP_OPTIONS, MEMORY_MAP_OPTIONS, REFERENCE, VIEWPORT, protocol, type CandidateId, type CandidateMeta, type Protocol } from "./matrix";
-import { processBytes, type ProcessBytes } from "./memory";
+import { browserPid, killProcessTree, processBytes, type ProcessBytes } from "./memory";
 import { rigInfo, type RigInfo } from "./rig";
 import { startServer, type BenchServer } from "./server";
 
@@ -165,10 +165,10 @@ const SETTLE_MS = 2000;
 const log = (msg: string) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${msg}`);
 
 /** Every call into the browser gets a hard deadline: a frozen page must never hang the run. */
-async function deadline<T>(what: string, ms: number, work: Promise<T>): Promise<T> {
+async function deadline<T>(what: string | (() => string), ms: number, work: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${what}: no answer from the browser after ${ms} ms`)), ms);
+    timer = setTimeout(() => reject(new Error(`${typeof what === "function" ? what() : what}: no answer from the browser after ${ms} ms`)), ms);
   });
   try {
     return await Promise.race([work, timeout]);
@@ -203,7 +203,7 @@ async function measurePass(
 ): Promise<PassResult> {
   const meta = CANDIDATES[id];
   let phase = "navigate";
-  const ctx = await newBenchContext(browser, server.origin, id, () => phase);
+  const ctx = await deadline(phase, 30_000, newBenchContext(browser, server.origin, id, () => phase));
   try {
     // Every startup measurement begins from a settled browser: the previous context's teardown (hundreds of tiles,
     // a worker) otherwise overlaps the new map's first frames.
@@ -252,7 +252,7 @@ async function measurePass(
     // Startup again with fades off, in its own fresh context: mapbox-gl 1.13 holds load and idle until its 300 ms
     // fades finish and MapLibre does not, so this is the mark that means the same thing in every build.
     phase = "startup-nofade";
-    const ctx2 = await newBenchContext(browser, server.origin, id, () => phase);
+    const ctx2 = await deadline(phase, 30_000, newBenchContext(browser, server.origin, id, () => phase));
     let startupNoFade: StartupMarks;
     try {
       await deadline(phase, 60_000, ctx2.page.goto(`${server.origin}/blank.html`, { waitUntil: "load" }));
@@ -289,34 +289,61 @@ async function measurePass(
   }
 }
 
-async function measureMemory(server: BenchServer, id: CandidateId | null, proto: Protocol, coldStates: CameraState[], args: string[]): Promise<{ bytes: ProcessBytes; afterPath?: ProcessBytes; heapIdle: number | null; heapPath: number | null; heapScope: string | null }> {
-  const browser = await deadline("launch", 60_000, launch(args));
+/** Where a memory attempt is and which browser it launched, so a stuck attempt can be named and its browser ended. */
+interface MemoryTrack {
+  step: string;
+  browser: Browser | null;
+  browserPid: number | null;
+}
+
+/** Backstop for a whole memory attempt, which normally takes under a minute; every call inside it has its own deadline too. */
+const MEMORY_ATTEMPT_MS = 300_000;
+
+/** End the browser a failed memory attempt launched, if it is still up: close it, or kill it with its children if it won't close. */
+async function endBrowser(track: MemoryTrack): Promise<void> {
+  const browser = track.browser;
+  if (!browser?.isConnected()) return;
+  await closeQuietly(null, browser);
+  if (browser.isConnected() && track.browserPid !== null) await killProcessTree(track.browserPid);
+}
+
+async function measureMemory(server: BenchServer, id: CandidateId | null, proto: Protocol, coldStates: CameraState[], args: string[], track: MemoryTrack): Promise<{ bytes: ProcessBytes; afterPath?: ProcessBytes; heapIdle: number | null; heapPath: number | null; heapScope: string | null }> {
+  const call = <T>(step: string, ms: number, work: () => Promise<T>): Promise<T> => {
+    track.step = step;
+    return deadline(step, ms, work());
+  };
+  const evalMs = proto.idleTimeoutMs + 30_000;
+  const browser = await call("launch", 60_000, () => launch(args));
+  track.browser = browser;
+  track.browserPid = await call("browser pid", 30_000, () => browserPid(browser));
   const phase = "memory";
-  const ctx = await newBenchContext(browser, server.origin, id ?? "baseline", () => phase);
+  const ctx = await call("context", 30_000, () => newBenchContext(browser, server.origin, id ?? "baseline", () => phase));
   try {
-    const cdp = await ctx.context.newCDPSession(ctx.page);
-    const gc = () => cdp.send("HeapProfiler.collectGarbage").catch(() => undefined);
+    const cdp = await call("cdp session", 30_000, () => ctx.context.newCDPSession(ctx.page));
+    const gc = (step: string) => call(step, 30_000, () => cdp.send("HeapProfiler.collectGarbage").catch(() => undefined));
+    const bytesNow = (step: string) => call(step, 90_000, () => processBytes(browser));
     if (id === null) {
-      await ctx.page.goto(`${server.origin}/blank.html`, { waitUntil: "load" });
+      await call("blank page", 60_000, () => ctx.page.goto(`${server.origin}/blank.html`, { waitUntil: "load" }));
       await ctx.page.waitForTimeout(1500);
-      await gc();
-      return { bytes: await processBytes(browser), heapIdle: null, heapPath: null, heapScope: null };
+      await gc("gc");
+      return { bytes: await bytesNow("process memory"), heapIdle: null, heapPath: null, heapScope: null };
     }
     const meta = CANDIDATES[id];
-    await ctx.page.goto(`${server.origin}/?candidate=${id}`, { waitUntil: "load" });
-    await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate((m) => (window as any).bench.loadLib(m), { id: meta.id, kind: meta.kind, js: meta.js, css: meta.css, global: meta.global ?? null }));
-    await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate((cfg) => (window as any).bench.start(cfg), { state: START, options: MEMORY_MAP_OPTIONS, idleTimeoutMs: proto.idleTimeoutMs }));
+    await call("page", 60_000, () => ctx.page.goto(`${server.origin}/?candidate=${id}`, { waitUntil: "load" }));
+    await call("load library", evalMs, () => ctx.page.evaluate((m) => (window as any).bench.loadLib(m), { id: meta.id, kind: meta.kind, js: meta.js, css: meta.css, global: meta.global ?? null }));
+    await call("start", evalMs, () => ctx.page.evaluate((cfg) => (window as any).bench.start(cfg), { state: START, options: MEMORY_MAP_OPTIONS, idleTimeoutMs: proto.idleTimeoutMs }));
     await ctx.page.waitForTimeout(1000);
-    await gc();
-    const heapIdle = (await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate(() => (window as any).bench.jsHeap()))) as { bytes: number; scope: string } | null;
-    const bytes = await processBytes(browser);
-    await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate((cfg) => (window as any).bench.traverseIdle(cfg.states, cfg.idleTimeoutMs), { states: coldStates, idleTimeoutMs: proto.idleTimeoutMs }));
+    await gc("gc after idle");
+    const heapIdle = (await call("heap after idle", evalMs, () => ctx.page.evaluate(() => (window as any).bench.jsHeap()))) as { bytes: number; scope: string } | null;
+    const bytes = await bytesNow("process memory after idle");
+    await call("camera path", evalMs, () => ctx.page.evaluate((cfg) => (window as any).bench.traverseIdle(cfg.states, cfg.idleTimeoutMs), { states: coldStates, idleTimeoutMs: proto.idleTimeoutMs }));
     await ctx.page.waitForTimeout(1000);
-    await gc();
-    const heapPath = (await deadline(phase, proto.idleTimeoutMs + 30_000, ctx.page.evaluate(() => (window as any).bench.jsHeap()))) as { bytes: number; scope: string } | null;
-    const afterPath = await processBytes(browser);
+    await gc("gc after path");
+    const heapPath = (await call("heap after path", evalMs, () => ctx.page.evaluate(() => (window as any).bench.jsHeap()))) as { bytes: number; scope: string } | null;
+    const afterPath = await bytesNow("process memory after path");
     return { bytes, afterPath, heapIdle: heapIdle?.bytes ?? null, heapPath: heapPath?.bytes ?? null, heapScope: heapIdle?.scope ?? heapPath?.scope ?? null };
   } finally {
+    track.step = "close";
     await closeQuietly(ctx.context, browser);
   }
 }
@@ -426,13 +453,17 @@ async function main(): Promise<void> {
 
   if (proto.memorySamples > 0) {
     // A fresh browser in a non-interactive Windows session occasionally loses its page at launch or under load, for
-    // any candidate. A dead browser is relaunched up to twice and the sample redone from scratch; the relaunch is
-    // counted in the results. Only a sample that fails three times is recorded as a failure.
-    const withRelaunch = async <T>(s: number, id: CandidateId | null, fn: () => Promise<T>): Promise<T> => {
+    // any candidate, and now and then stops answering without an error. Every call in an attempt has a deadline and
+    // the attempt as a whole has another; a browser that stops answering is closed, or killed with its children if it
+    // won't close. A dead or stuck browser is relaunched up to twice and the sample redone from scratch; the relaunch
+    // is counted in the results. Only a sample that fails three times is recorded as a failure.
+    const withRelaunch = async <T>(s: number, id: CandidateId | null, fn: (track: MemoryTrack) => Promise<T>): Promise<T> => {
       for (let attempt = 0; ; attempt++) {
+        const track: MemoryTrack = { step: "launch", browser: null, browserPid: null };
         try {
-          return await fn();
+          return await deadline(() => `memory attempt at ${track.step}`, MEMORY_ATTEMPT_MS, fn(track));
         } catch (err) {
+          await endBrowser(track);
           const message = (err instanceof Error ? err.message : String(err)).split("\n")[0]!;
           if (attempt >= 2) throw err;
           results.browserRelaunches.push({ sample: s, candidate: id, attempt: attempt + 1, message });
@@ -442,9 +473,9 @@ async function main(): Promise<void> {
     };
     for (let s = 0; s < proto.memorySamples; s++) {
       try {
-        const baseline = await withRelaunch(s, null, () => measureMemory(server, null, proto, coldStates, chromeArgs));
+        const baseline = await withRelaunch(s, null, (track) => measureMemory(server, null, proto, coldStates, chromeArgs, track));
         for (const id of rotate(args.candidates, s)) {
-          const m = await withRelaunch(s, id, () => measureMemory(server, id, proto, coldStates, chromeArgs));
+          const m = await withRelaunch(s, id, (track) => measureMemory(server, id, proto, coldStates, chromeArgs, track));
           (results.memory[id] ??= []).push({ baseline: baseline.bytes, afterIdle: m.bytes, afterPath: m.afterPath!, jsHeapAfterIdleBytes: m.heapIdle, jsHeapAfterPathBytes: m.heapPath, jsHeapScope: m.heapScope });
           log(`memory ${s} ${id}: baseline ${baseline.bytes.total} MB, idle ${m.bytes.total} MB, after path ${m.afterPath!.total} MB (renderer ${m.afterPath!.renderer}, gpu ${m.afterPath!.gpu})`);
         }
