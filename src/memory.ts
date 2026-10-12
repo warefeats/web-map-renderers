@@ -27,6 +27,22 @@ export async function chromiumProcesses(browser: Browser): Promise<ChromiumProce
   }
 }
 
+/** The browser process's own pid, taken while it still answers, so a browser that stops answering can be killed. */
+export async function browserPid(browser: Browser): Promise<number | null> {
+  return (await chromiumProcesses(browser)).find((p) => p.type === "browser")?.pid ?? null;
+}
+
+/** Kill a browser that won't close, with its child processes. */
+export async function killProcessTree(pid: number): Promise<void> {
+  if (process.platform === "win32") {
+    await Bun.spawn(["taskkill", "/PID", String(pid), "/T", "/F"], { stdout: "ignore", stderr: "ignore", timeout: 15_000 }).exited;
+    return;
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {}
+}
+
 type Bucket = keyof Pick<ProcessBytes, "renderer" | "gpu" | "utility" | "browser">;
 
 function bucket(type: string): Bucket {
@@ -39,9 +55,11 @@ function bucket(type: string): Bucket {
 async function bytesByPidWindows(pids: number[]): Promise<Map<number, number>> {
   const filter = pids.map((p) => `ProcessId=${p}`).join(" OR ");
   const script = `Get-CimInstance Win32_Process -Filter "${filter}" | Select-Object ProcessId,PrivatePageCount | ConvertTo-Json -Compress`;
-  const proc = Bun.spawn(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], { stdout: "pipe", stderr: "pipe" });
+  // A WMI query that stops answering is killed; one that fails must not read as zero bytes.
+  const proc = Bun.spawn(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], { stdout: "pipe", stderr: "pipe", timeout: 60_000 });
   const text = (await new Response(proc.stdout).text()).trim();
-  await proc.exited;
+  const code = await proc.exited;
+  if (code !== 0 || proc.signalCode) throw new Error(`process memory: powershell exited with ${proc.signalCode ?? code}`);
   const parsed = text ? (JSON.parse(text) as { ProcessId: number; PrivatePageCount: number } | { ProcessId: number; PrivatePageCount: number }[]) : [];
   const rows = Array.isArray(parsed) ? parsed : [parsed];
   return new Map(rows.map((r) => [r.ProcessId, Number(r.PrivatePageCount ?? 0)]));
