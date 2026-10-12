@@ -57,7 +57,7 @@ The published run comes from a Windows 11 mini PC with an AMD Ryzen 7 6800H and 
 
 ## Publishing
 
-`just import` turns `results.json` into `runs/<date>-<rig>.json` and registers it in `benchmark.json`; the verdict and limitations in `benchmark.json` are written by hand from the run. The site pins this repository by commit in its registry and renders whatever the run file says.
+`just import` turns `results.json` into `runs/<date>-<rig>.json` and registers it in `benchmark.json`; the verdict and limitations in `benchmark.json` are written by hand from the run. The site pins this repository by commit in its registry and renders whatever the run file says. `sectionSamples: "repeats"` in `benchmark.json` says each section's samples are one value per measured pass (per memory sample, for memory) of the section's headline measure, so their spread is run-to-run noise; the site's scorecard and the fleet's verdict check treat a lead inside twice the standard error of the difference as a tie.
 
 ## Fleet runs
 
