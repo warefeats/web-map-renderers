@@ -14,7 +14,7 @@
       "automerge": false
     },
     {
-      "description": "Candidates: a release line moves to its newest stable release once that release is 7 days old, and the PR merges itself when CI passes. Nothing is measured until a fleet run is dispatched.",
+      "description": "Candidates: a release line moves to its newest stable release once that release is 7 days old, and the PR merges itself when CI passes. The fleet measures it at its next six-hourly check, lands the run, and updates the site.",
       "matchDepNames": ["maplibre-gl-5", "maplibre-gl-6"],
       "matchUpdateTypes": ["minor", "patch"],
       "automerge": true
