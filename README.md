@@ -1,6 +1,6 @@
 # Mapbox GL JS 1.13 vs MapLibre GL JS 5 vs MapLibre GL JS 6 — browser map renderers
 
-The runner behind [warefeats.com/benchmarks/maplibre-gl-js-vs-mapbox-gl-js/](https://warefeats.com/benchmarks/maplibre-gl-js-vs-mapbox-gl-js/). Three pinned renderer builds are fed the same self-hosted Berlin vector tiles, the same style, sprites and glyphs from a loopback server, in the same pinned Chromium on the same GPU, and this runner measures the startup timeline (bundle import, style load, first tile, load, first idle, plus 5,000 GeoJSON polygons), frame time over one camera path cold and warm, and renderer plus GPU process memory. Part of the [warefeats](https://warefeats.com) benchmark suite.
+The runner behind [warefeats.com/posts/2026-09-02-web-map-renderers-mapbox-gl-js-vs-maplibre-gl-js/](https://warefeats.com/posts/2026-09-02-web-map-renderers-mapbox-gl-js-vs-maplibre-gl-js/). Three pinned renderer builds are fed the same self-hosted Berlin vector tiles, the same style, sprites and glyphs from a loopback server, in the same pinned Chromium on the same GPU, and this runner measures the startup timeline (bundle import, style load, first tile, load, first idle, plus 5,000 GeoJSON polygons), frame time over one camera path cold and warm, and renderer plus GPU process memory. Part of the [warefeats](https://warefeats.com) benchmark suite.
 
 Disclosure: the author contributes to MapLibre projects, including MapLibre GL JS and Martin. Every number here comes from the runner in this repository, and the protocol is written so that anyone can rerun it.
 
