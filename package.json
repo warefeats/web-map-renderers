@@ -19,7 +19,7 @@
     "@types/pngjs": "6.0.5",
     "mapbox-gl": "1.13.3",
     "maplibre-gl-5": "npm:maplibre-gl@5.24.0",
-    "maplibre-gl-6": "npm:maplibre-gl@6.14.0",
+    "maplibre-gl-6": "npm:maplibre-gl@6.15.0",
     "pbf": "4.0.1",
     "pixelmatch": "7.1.0",
     "playwright": "1.62.1",
