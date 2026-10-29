@@ -1,14 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { buildRun, checkFleetRun, lineupOf, runMetadata, versionOf, type RunMetadata } from "../src/import";
-import type { PassResult, RawResults } from "../src/run";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { enrichRunFile, summarizes } from "../src/enrich";
+import { buildRun, checkFleetRun, lineupOf, runMetadata, versionOf, type RunFile, type RunMetadata } from "../src/import";
+import type { ProcessBytes } from "../src/memory";
+import type { MemorySample, PassResult, RawResults } from "../src/run";
 
+/** One measured pass whose every mark follows `idle`, so no two passes of a candidate measure alike. */
 function pass(idle: number, warm: number): PassResult {
   return {
-    startup: { importMs: 50, styleLoadMs: 100, firstTileMs: 200, loadMs: 400, firstIdleMs: idle },
-    startupNoFade: { importMs: 50, styleLoadMs: 100, firstTileMs: 200, loadMs: idle / 2, firstIdleMs: idle / 2 + 5 },
-    geojsonMs: 300,
+    startup: { importMs: idle / 50, styleLoadMs: idle / 20, firstTileMs: idle / 5, loadMs: idle / 3, firstIdleMs: idle },
+    startupNoFade: { importMs: idle / 50, styleLoadMs: idle / 20, firstTileMs: idle / 5, loadMs: idle / 2, firstIdleMs: idle / 2 + 5 },
+    geojsonMs: idle / 4,
     geojsonFeatures: 5000,
-    coldViewsMs: Array.from({ length: 12 }, (_, i) => 40 + i),
+    coldViewsMs: Array.from({ length: 12 }, (_, i) => idle / 30 + i),
     warmStepsMs: Array.from({ length: 60 }, (_, i) => warm + (i % 3) * 0.1),
     tileRequests: 120,
     tilesMissing: 0,
@@ -78,6 +84,23 @@ const raw: RawResults = {
   failures: [],
 };
 
+function bytes(renderer: number, gpu: number): ProcessBytes {
+  return { renderer, gpu, utility: 0, browser: 0, total: renderer + gpu, processes: 2, measure: "private-bytes" };
+}
+
+/** One memory sample: the renderer grew by `idle` MB at first idle and by `path` MB after the camera path, the GPU process by a tenth of each. */
+function memorySample(idle: number, path: number): MemorySample {
+  return { baseline: bytes(100, 50), afterIdle: bytes(100 + idle, 50 + idle / 10), afterPath: bytes(100 + path, 50 + path / 10), jsHeapAfterIdleBytes: null, jsHeapAfterPathBytes: null, jsHeapScope: null };
+}
+
+const memory: RawResults["memory"] = {
+  "mapbox-gl-1-13": [memorySample(300, 1300), memorySample(320, 1400)],
+  "maplibre-gl-5": [memorySample(170, 900), memorySample(180, 920)],
+  "maplibre-gl-6": [memorySample(160, 1000), memorySample(150, 1100)],
+};
+
+const withMemory: RawResults = { ...raw, memory, protocol: { ...raw.protocol, memorySamples: 2 } };
+
 const meta: RunMetadata = {
   id: "2026-09-03-test",
   label: "test",
@@ -104,8 +127,102 @@ describe("import", () => {
   });
 
   test("samples are independently measured, never replicated", () => {
-    const run = buildRun(raw, meta);
-    for (const s of run.sections) for (const c of s.candidates) expect(new Set(c.samplesMs).size).toBeGreaterThan(1);
+    for (const results of [raw, withMemory]) {
+      const run = buildRun(results, meta);
+      for (const s of run.sections) {
+        for (const c of s.candidates) expect(new Set(c.samplesMs).size).toBeGreaterThan(1);
+        for (const t of s.tests) {
+          for (const r of t.results) {
+            const samples = r.samples ?? [];
+            expect(samples.length).toBe(s.id === "memory" ? results.protocol.memorySamples : results.protocol.passes);
+            if (samples.length > 1) expect(new Set(samples).size).toBeGreaterThan(1);
+          }
+        }
+      }
+    }
+  });
+
+  test("every test carries its per-pass samples and names the statistic its value is", () => {
+    const run = buildRun(withMemory, meta);
+    for (const s of run.sections) for (const t of s.tests) expect(t.statistic).toBe("mean");
+    const loadNoFade = run.sections[0]!.tests.find((t) => t.id === "load-no-fade")!;
+    expect(loadNoFade.results).toEqual([
+      { candidateId: "mapbox-gl-1-13", value: 625, samples: [600, 650] },
+      { candidateId: "maplibre-gl-5", value: 525, samples: [500, 550] },
+      { candidateId: "maplibre-gl-6", value: 462.5, samples: [450, 475] },
+    ]);
+    const warmPaint = run.sections[1]!.tests.find((t) => t.id === "warm-paint")!;
+    expect(warmPaint.results).toEqual([
+      { candidateId: "mapbox-gl-1-13", value: 4.2, samples: [4.1, 4.3] },
+      { candidateId: "maplibre-gl-5", value: 3.15, samples: [3.1, 3.2] },
+      { candidateId: "maplibre-gl-6", value: 2.65, samples: [2.6, 2.7] },
+    ]);
+    expect(Object.keys(loadNoFade)).toEqual(["id", "title", "description", "unit", "lowerIsBetter", "results", "statistic"]);
+    expect(Object.keys(loadNoFade.results[0]!)).toEqual(["candidateId", "value", "samples"]);
+  });
+});
+
+describe("enrich", () => {
+  const memoryOnly: RawResults = { ...withMemory, passes: [] };
+  const fresh: RunFile = {
+    ...buildRun(withMemory, meta),
+    provenance: { kind: "fleet", commit: "a".repeat(40), rig: "r" },
+    lineup: [{ candidateId: "maplibre-gl-6", package: "maplibre-gl", version: "6.13.0", integrity: "sha512-CCC=" }],
+  };
+  /** The same run as an importer that knew nothing of samples and statistics wrote it. */
+  const bare: RunFile = {
+    ...fresh,
+    sections: fresh.sections.map((s) => ({ ...s, tests: s.tests.map(({ statistic: _statistic, ...t }) => ({ ...t, results: t.results.map(({ samples: _samples, ...r }) => r) })) })),
+  };
+  const bytesOf = (run: RunFile) => JSON.stringify(run, null, 2) + "\n";
+
+  function workspace(): { dir: string; run: string; timing: string; memory: string } {
+    const dir = mkdtempSync(join(tmpdir(), "wmr-enrich-"));
+    const files = { dir, run: join(dir, "run.json"), timing: join(dir, "results-timing.json"), memory: join(dir, "results-memory.json") };
+    writeFileSync(files.run, bytesOf(bare));
+    writeFileSync(files.timing, JSON.stringify(raw));
+    writeFileSync(files.memory, JSON.stringify(memoryOnly));
+    return files;
+  }
+
+  test("the site's check: the samples' mean lands within half a unit of the value's last printed digit", () => {
+    expect(summarizes(4.2, [4.1, 4.3])).toBe(true);
+    expect(summarizes(6.5, [6.46, 6.54])).toBe(true);
+    expect(summarizes(6.53, [6.5, 6.5])).toBe(false);
+    expect(summarizes(203, [200, 207])).toBe(true);
+    expect(summarizes(203, [200, 207.1])).toBe(false);
+    expect(summarizes(203, [])).toBe(false);
+  });
+
+  test("a run published without them gets the fresh build's samples and statistics and nothing else changes", async () => {
+    const files = workspace();
+    try {
+      expect(bytesOf(bare)).not.toBe(bytesOf(fresh));
+      expect(await enrichRunFile(files.run, files.timing, files.memory)).toEqual({ tests: 11, results: 33 });
+      const text = readFileSync(files.run, "utf8");
+      expect(text).toBe(bytesOf(fresh));
+      expect(JSON.parse(text)).toEqual(JSON.parse(bytesOf(fresh)));
+      expect(await enrichRunFile(files.run, files.timing, files.memory)).toEqual({ tests: 11, results: 33 });
+      expect(readFileSync(files.run, "utf8")).toBe(bytesOf(fresh));
+    } finally {
+      rmSync(files.dir, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses raw results that rebuild a different value, a missing memory file and a reformatted run, leaving the file alone", async () => {
+    const files = workspace();
+    try {
+      await expect(enrichRunFile(files.run, files.timing)).rejects.toThrow("section memory is not in the rebuilt run");
+      const perturbed: RawResults = { ...raw, passes: raw.passes.map((p) => (p.index === 2 ? { ...p, results: { ...p.results, "maplibre-gl-6": { ...p.results["maplibre-gl-6"]!, geojsonMs: 999 } } } : p)) };
+      writeFileSync(files.timing, JSON.stringify(perturbed));
+      await expect(enrichRunFile(files.run, files.timing, files.memory)).rejects.toThrow("startup/geojson-5k/maplibre-gl-6: published 231.3, rebuilt 612");
+      expect(readFileSync(files.run, "utf8")).toBe(bytesOf(bare));
+      writeFileSync(files.timing, JSON.stringify(raw));
+      writeFileSync(files.run, JSON.stringify(bare, null, 4) + "\n");
+      await expect(enrichRunFile(files.run, files.timing, files.memory)).rejects.toThrow("not formatted as the importer writes it");
+    } finally {
+      rmSync(files.dir, { recursive: true, force: true });
+    }
   });
 });
 
