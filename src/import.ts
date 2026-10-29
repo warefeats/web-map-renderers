@@ -38,13 +38,24 @@ export interface Candidate {
   metrics?: Record<string, Metric>;
 }
 
+/** How a test's `value` summarizes each candidate's samples. "other": a value the site cannot recompute from the per-pass numbers; the test's description says what it is. */
+export type TestStatistic = "mean" | "median" | "min" | "max" | "other";
+
+export interface TestResult {
+  candidateId: string;
+  value: number;
+  /** One measurement of this candidate on this test per measured pass, in the test's unit, in pass order: the numbers `value` summarizes. */
+  samples?: number[];
+}
+
 export interface BenchmarkTest {
   id: string;
   title: string;
   description: string;
   unit: string;
   lowerIsBetter: boolean;
-  results: { candidateId: string; value: number }[];
+  results: TestResult[];
+  statistic?: TestStatistic;
 }
 
 export interface BenchmarkSection {
@@ -135,6 +146,16 @@ function base(raw: RawResults, id: CandidateId, samples: number[], metrics: Reco
   return { id, name: meta.name, version: versionOf(raw, id), color: meta.color, homepage: meta.homepage, statistics: statistics(samples), samplesMs: samples, metrics };
 }
 
+/** One candidate's row of a test: its value and, when given, the per-pass samples the value summarizes. */
+function row(candidateId: string, value: number, samples?: number[]): TestResult {
+  return samples ? { candidateId, value, samples } : { candidateId, value };
+}
+
+/** The row of a test whose value is the mean of the candidate's per-pass samples, rounded to `digits`. */
+function meanRow(candidateId: string, samples: number[], digits: number): TestResult {
+  return row(candidateId, round(avg(samples), digits), samples);
+}
+
 function fmtMs(ms: number): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms.toFixed(ms < 10 ? 2 : ms < 100 ? 1 : 0)} ms`;
 }
@@ -180,23 +201,28 @@ export function buildStartupSection(raw: RawResults): BenchmarkSection {
       description: "Map constructed until the load event with fadeDuration 0: style, every tile in the view fetched and parsed, everything drawn once. The one startup mark that means the same amount of work in all three builds.",
       unit: "ms",
       lowerIsBetter: true,
-      results: ids.map((id) => ({ candidateId: id, value: round(avg(noFade(id, "loadMs")), 1) })),
+      results: ids.map((id) => meanRow(id, noFade(id, "loadMs"), 1)),
+      statistic: "mean",
     },
-    ...marks.map((m) => ({
-      id: m.id,
-      title: m.title,
-      description: m.description,
-      unit: "ms",
-      lowerIsBetter: true,
-      results: ids.map((id) => ({ candidateId: id, value: round(avg(perPass(raw, id, (r) => r.startup[m.key])), 1) })),
-    })),
+    ...marks.map(
+      (m): BenchmarkTest => ({
+        id: m.id,
+        title: m.title,
+        description: m.description,
+        unit: "ms",
+        lowerIsBetter: true,
+        results: ids.map((id) => meanRow(id, perPass(raw, id, (r) => r.startup[m.key]), 1)),
+        statistic: "mean",
+      }),
+    ),
     {
       id: "geojson-5k",
       title: "GeoJSON, 5,000 buildings",
       description: "A pre-parsed FeatureCollection of 5,000 Berlin building footprints added as a fill layer to the idle map, until the next idle.",
       unit: "ms",
       lowerIsBetter: true,
-      results: ids.map((id) => ({ candidateId: id, value: round(avg(perPass(raw, id, (r) => r.geojsonMs)), 1) })),
+      results: ids.map((id) => meanRow(id, perPass(raw, id, (r) => r.geojsonMs), 1)),
+      statistic: "mean",
     },
   ];
   const { best, worst } = rankByMean(candidates);
@@ -237,7 +263,8 @@ export function buildFrameTimeSection(raw: RawResults): BenchmarkSection {
       description: `Mean time per view over the ${raw.protocol.coldViews}-view camera path, each view advanced only when the map reports idle, so fetch, parse, layout and paint are all inside it.`,
       unit: "ms",
       lowerIsBetter: true,
-      results: ids.map((id) => ({ candidateId: id, value: round(avg(perPass(raw, id, (r) => avg(r.coldViewsMs))), 1) })),
+      results: ids.map((id) => meanRow(id, perPass(raw, id, (r) => avg(r.coldViewsMs)), 1)),
+      statistic: "mean",
     },
     {
       id: "warm-paint",
@@ -245,7 +272,8 @@ export function buildFrameTimeSection(raw: RawResults): BenchmarkSection {
       description: `Mean time per frame over the ${raw.protocol.warmSteps}-step camera path, the camera moved on every render event, vsync and the frame-rate limit off. Every tile the cold pan loaded is resident; tiles only needed at intermediate camera states are still requested and abandoned as the camera moves on, and those requests are counted beside the timings and included in the frame time.`,
       unit: "ms",
       lowerIsBetter: true,
-      results: ids.map((id) => ({ candidateId: id, value: round(avg(perPass(raw, id, (r) => avg(r.warmStepsMs))), 2) })),
+      results: ids.map((id) => meanRow(id, perPass(raw, id, (r) => avg(r.warmStepsMs)), 2)),
+      statistic: "mean",
     },
   ];
   const { best, worst } = rankByMean(candidates);
@@ -289,7 +317,8 @@ export function buildMemorySection(raw: RawResults): BenchmarkSection {
       description: "Renderer and GPU process memory over a blank page, once the initial view has settled.",
       unit: "MB",
       lowerIsBetter: true,
-      results: ids.map((id) => ({ candidateId: id, value: round(avg(delta(id, "afterIdle")), 1) })),
+      results: ids.map((id) => meanRow(id, delta(id, "afterIdle"), 1)),
+      statistic: "mean",
     },
     {
       id: "memory-after-path",
@@ -297,7 +326,8 @@ export function buildMemorySection(raw: RawResults): BenchmarkSection {
       description: `Renderer and GPU process memory over a blank page after the ${raw.protocol.coldViews}-view cold pan, with each library's default tile cache.`,
       unit: "MB",
       lowerIsBetter: true,
-      results: ids.map((id) => ({ candidateId: id, value: round(avg(delta(id, "afterPath")), 1) })),
+      results: ids.map((id) => meanRow(id, delta(id, "afterPath"), 1)),
+      statistic: "mean",
     },
   ];
   const { best, worst } = rankByMean(candidates);
@@ -317,11 +347,16 @@ export function buildMemorySection(raw: RawResults): BenchmarkSection {
   };
 }
 
+/** Every section a run's results support: startup and frame time always, memory once at least two candidates have samples. */
+export function buildSections(raw: RawResults): BenchmarkSection[] {
+  const sections = [buildStartupSection(raw), buildFrameTimeSection(raw)];
+  if (Object.keys(raw.memory).length >= 2) sections.push(buildMemorySection(raw));
+  return sections;
+}
+
 export function buildRun(raw: RawResults, meta: RunMetadata): RunFile {
   const results = validateResults(raw);
-  const sections = [buildStartupSection(results), buildFrameTimeSection(results)];
-  if (Object.keys(results.memory).length >= 2) sections.push(buildMemorySection(results));
-  return { schemaVersion: 1, id: meta.id, label: meta.label, publishedAt: meta.publishedAt, environment: meta.environment, protocol: meta.protocol, candidates: [], sections };
+  return { schemaVersion: 1, id: meta.id, label: meta.label, publishedAt: meta.publishedAt, environment: meta.environment, protocol: meta.protocol, candidates: [], sections: buildSections(results) };
 }
 
 export function slug(text: string): string {
@@ -399,6 +434,19 @@ export function lineupOf(raw: RawResults, lock: string): LineupEntry[] {
   });
 }
 
+/**
+ * Take the memory samples (and their relaunch count) from a separate run of the memory phase alone, on the same rig
+ * and build, so a lost memory sample does not cost the timing passes a rerun.
+ */
+export function mergeMemoryResults(raw: RawResults, mem: RawResults): RawResults {
+  if (mem.rig.gpu !== raw.rig.gpu || mem.browser.chromium !== raw.browser.chromium) throw new Error("memory results come from a different rig or browser build");
+  raw.memory = mem.memory;
+  raw.browserRelaunches = mem.browserRelaunches ?? [];
+  raw.protocol.memorySamples = mem.protocol.memorySamples;
+  raw.protocol.memoryMeasure = mem.protocol.memoryMeasure;
+  return raw;
+}
+
 /** Refusals for a fleet run: nothing smoke-tested, gated out or mislabelled reaches a PR. */
 export function checkFleetRun(raw: RawResults, opts: { allowSmoke: boolean; commit?: string }): void {
   if (raw.smoke && !opts.allowSmoke) throw new Error("a fleet run can't be a smoke run (pass --allow-smoke to check the pipeline)");
@@ -417,17 +465,10 @@ if (import.meta.main) {
   const fleet = argv.includes("--fleet");
   const resultsPath = flag("results") ? resolve(flag("results")!) : join(root, "results.json");
   const raw = validateResults(await Bun.file(resultsPath).json());
-  // --memory-results=<file>: take the memory samples (and their relaunch count) from a separate run of the memory
-  // phase alone, on the same rig and build, so a lost memory sample does not cost the timing passes a rerun.
   const memoryArg = flag("memory-results");
   if (memoryArg) {
-    const mem = validateMemoryResults(await Bun.file(resolve(memoryArg)).json());
-    if (mem.rig.gpu !== raw.rig.gpu || mem.browser.chromium !== raw.browser.chromium) throw new Error("memory results come from a different rig or browser build");
-    raw.memory = mem.memory;
-    raw.browserRelaunches = mem.browserRelaunches ?? [];
-    raw.protocol.memorySamples = mem.protocol.memorySamples;
-    raw.protocol.memoryMeasure = mem.protocol.memoryMeasure;
-    console.log(`memory samples taken from ${memoryArg} (${mem.protocol.memorySamples} samples, ${raw.browserRelaunches.length} relaunches)`);
+    mergeMemoryResults(raw, validateMemoryResults(await Bun.file(resolve(memoryArg)).json()));
+    console.log(`memory samples taken from ${memoryArg} (${raw.protocol.memorySamples} samples, ${raw.browserRelaunches.length} relaunches)`);
   }
   if (raw.smoke) console.warn("warning: importing a SMOKE run");
   if (!raw.gate.ok) console.warn("warning: the parity gate did not pass; this run is not publishable");

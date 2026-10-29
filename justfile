@@ -29,6 +29,10 @@ bench *ARGS:
 import RESULTS="results.json":
     bun run src/import.ts --results={{RESULTS}}
 
+# Append to a published run what a newer importer emits from its raw results (each test's statistic and per-pass samples), every value checked against the file.
+enrich RUN TIMING MEMORY:
+    bun run src/enrich.ts --run={{RUN}} --results={{TIMING}} --memory-results={{MEMORY}}
+
 # Corpus: download + verify inputs, cut tiles, extract the GeoJSON fixture.
 corpus-fetch:
     bash corpus/fetch.sh
