@@ -8,7 +8,7 @@ import { Database } from "bun:sqlite";
 import { statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { VectorTile } from "@mapbox/vector-tile";
-import Pbf from "pbf";
+import { PbfReader } from "pbf";
 
 const here = dirname(new URL(import.meta.url).pathname);
 const path = Bun.argv[2] ?? join(here, "cache", "berlin.mbtiles");
@@ -54,7 +54,7 @@ const sample = db
   .get()!;
 const isGzip = sample.d[0] === 0x1f && sample.d[1] === 0x8b;
 const raw = isGzip ? Bun.gunzipSync(sample.d as Uint8Array<ArrayBuffer>) : sample.d;
-const tile = new VectorTile(new Pbf(raw));
+const tile = new VectorTile(new PbfReader(raw));
 out(`largest z14 tile\tz=${sample.z} x=${sample.x} tms_y=${sample.y} (xyz_y=${(1 << sample.z) - 1 - sample.y})\t${sample.d.length} bytes gzip -> ${raw.length} bytes MVT`);
 for (const [name, layer] of Object.entries(tile.layers)) out(`layer\t${name}\t${layer.length} features\textent ${layer.extent}`);
 out();

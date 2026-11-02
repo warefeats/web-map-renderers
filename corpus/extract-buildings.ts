@@ -17,7 +17,7 @@
 import { Database } from "bun:sqlite";
 import { dirname, join } from "node:path";
 import { VectorTile } from "@mapbox/vector-tile";
-import Pbf from "pbf";
+import { PbfReader } from "pbf";
 
 const here = dirname(new URL(import.meta.url).pathname);
 const keepMulti = Bun.argv.includes("--multipolygons");
@@ -69,7 +69,7 @@ outer: for (let r = 0; r < 64; r++) {
       lastRing = r;
       const blob = row.d;
       const raw = blob[0] === 0x1f && blob[1] === 0x8b ? Bun.gunzipSync(blob as Uint8Array<ArrayBuffer>) : blob;
-      const layer = new VectorTile(new Pbf(raw)).layers.building;
+      const layer = new VectorTile(new PbfReader(raw)).layers.building;
       if (!layer) continue;
       for (let i = 0; i < layer.length; i++) {
         const f = layer.feature(i);
